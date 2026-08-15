@@ -324,6 +324,28 @@ try {
   ok('accept without a room allowed once requirement is off', r.status === 200 && r.body.status === 'accepted');
   await api('PUT', '/api/settings', { headers: H(adminT), body: { requireRoomOnAccept: true } });
 
+  section('Partial payments (permission-gated)');
+  r = await api('POST', '/api/cashiers', { headers: H(adminT), body: { name: 'Pesa', pin: '7777', role: 'cashier', permissions: { takePayment: true, partialPayment: false, advanceStatus: true } } });
+  ok('cashier created without partial-payment permission', r.status === 201 && r.body.permissions.partialPayment === false);
+  const pesaAuth = await api('POST', '/api/auth/pin', { body: { pin: '7777' } });
+  const po = await api('POST', '/api/orders', { body: { guestName: 'Pay Guest', guestEmail: 'payg@example.com', items: 10, paymentTiming: 'pickup' } });
+  r = await api('POST', `/api/orders/${po.body.id}/accept`, { headers: H(adminT), body: { room: 'X' } });
+  ok('order accepted with computed price 10', r.body.price === 10 && r.body.amountPaid === 0, JSON.stringify(r.body.price));
+  r = await api('POST', `/api/orders/${po.body.id}/pay`, { headers: H(pesaAuth.body.token), body: { amount: 4, method: 'cash' } });
+  ok('cashier without permission cannot pay partial', r.status === 403, `got ${r.status}`);
+  r = await api('POST', `/api/orders/${po.body.id}/pay`, { headers: H(adminT), body: { amount: 4, method: 'cash' } });
+  ok('admin records a partial payment', r.status === 200 && r.body.paymentStatus === 'partial' && r.body.amountPaid === 4, JSON.stringify(r.body.paymentStatus));
+  await api('POST', `/api/orders/${po.body.id}/advance`, { headers: H(adminT), body: {} }); // cleaning
+  await api('POST', `/api/orders/${po.body.id}/advance`, { headers: H(adminT), body: {} }); // ready
+  r = await api('POST', `/api/orders/${po.body.id}/advance`, { headers: H(adminT), body: {} }); // try picked up
+  ok('cannot mark picked up while only partly paid', r.status === 409);
+  r = await api('POST', `/api/orders/${po.body.id}/pay`, { headers: H(pesaAuth.body.token), body: { method: 'card' } }); // full remaining — allowed for anyone
+  ok('paying the full remaining is allowed without partial permission', r.status === 200 && r.body.paymentStatus === 'paid' && r.body.amountPaid === 10, JSON.stringify(r.body.amountPaid));
+  r = await api('POST', `/api/orders/${po.body.id}/advance`, { headers: H(adminT), body: {} });
+  ok('can mark picked up once fully paid', r.status === 200 && r.body.status === 'completed');
+  r = await api('GET', '/api/report', { headers: H(adminT) });
+  ok('report by-method includes the ledger split (cash 4 + card 6)', r.body.byMethod.cash >= 4 && r.body.byMethod.card >= 6, JSON.stringify(r.body.byMethod));
+
   section('Admin: delete orders in a timeframe');
   const before = (await api('GET', '/api/orders', { headers: H(adminT) })).body.length;
   ok('there are orders to delete', before > 0);

@@ -162,7 +162,9 @@ try {
   r = await api('GET', '/api/report', { headers: authH(adminToken) });
   ok('report totals compute', r.status === 200 && r.body.totals.orders === 2, JSON.stringify(r.body.totals));
   ok('revenue = 20 (modified) + 8 (1 load) = 28', r.body.totals.revenue === 28, `got ${r.body.totals.revenue}`);
-  ok('split by method present', r.body.byMethod.cash === 8 && r.body.byMethod.card === 20, JSON.stringify(r.body.byMethod));
+  // by-method now reflects the actual payment ledger: card 24 was collected at accept
+  // (before the price was later modified to 20), cash 8 for the second order.
+  ok('split by method reflects the ledger', r.body.byMethod.cash === 8 && r.body.byMethod.card === 24, JSON.stringify(r.body.byMethod));
   ok('daily breakdown present', Array.isArray(r.body.byDay) && r.body.byDay.length >= 1);
 
   r = await api('GET', '/api/report/csv', { headers: authH(adminToken) });

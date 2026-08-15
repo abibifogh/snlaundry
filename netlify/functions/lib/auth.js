@@ -60,6 +60,7 @@ export const PERMISSIONS = {
   modifyAccepted: 'Edit an order after it has been accepted',
   cancelOrders: 'Cancel / delete orders',
   takePayment: 'Record payments',
+  partialPayment: 'Record partial payments (less than the full amount)',
   messageGuests: 'Reply to guest messages',
   viewReports: 'View revenue reports & analytics',
   exportReports: 'Export reports (CSV / PDF)',
@@ -101,6 +102,7 @@ export function defaultCashierPermissions() {
     modifyAccepted: false, // only admins by default — matches the requirement
     cancelOrders: false,
     takePayment: true,
+    partialPayment: false, // admin-granted only
     messageGuests: true,
     viewReports: false,
     exportReports: false,

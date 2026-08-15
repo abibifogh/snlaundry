@@ -259,7 +259,9 @@ export async function createOrder({ guestName, guestEmail, items, note, paymentT
     price: null,
     paymentTiming: timing, // 'now' | 'pickup'  (guest's choice)
     paymentMethod: method, // 'cash' | 'card' | null (guest's choice when paying now)
-    paymentStatus: 'unpaid', // unpaid | paid (reception records actual collection)
+    paymentStatus: 'unpaid', // unpaid | partial | paid
+    amountPaid: 0,
+    payments: [], // ledger: { id, amount, method, at, by, shiftId }
     paidBy: null,
     paidAt: null,
     paidShiftId: null,
@@ -335,9 +337,12 @@ export async function acceptOrder(id, data, actor) {
     o.pickupAt = data.pickupAt || nextDaySixPM();
     addLog(o, actor, 'accepted',
       `Accepted · room ${o.room || '—'} · ${settings.currency.symbol}${o.price} · ready by ${o.pickupAt}${priceNote}`);
-    // Reception may collect payment right at acceptance.
-    if (data.paymentStatus === 'paid') {
-      await applyPayment(o, data.paymentMethod, actor);
+    // Reception may collect payment right at acceptance (full, or a partial amount
+    // if allowed).
+    if (data.paymentStatus === 'paid' || (data.amountPaid != null && data.amountPaid !== '')) {
+      const amt = (data.amountPaid != null && data.amountPaid !== '') ? Number(data.amountPaid) : o.price;
+      if (amt < o.price - 0.001 && !canPartial(actor)) throw httpError(403, 'You are not allowed to record a partial payment.');
+      await applyPayment(o, { amount: amt, method: data.paymentMethod }, actor);
     }
     await notifyGuest('accepted', o, settings);
     return o;
@@ -385,23 +390,50 @@ export async function revertStatus(id, actor, reason) {
   });
 }
 
-// Record that payment was collected. Used at acceptance or later.
-export async function recordPayment(id, method, actor) {
+function canPartial(actor) {
+  return !!(actor && (actor.role === 'admin' || (actor.permissions && actor.permissions.partialPayment)));
+}
+
+// Record a payment (full or partial). Used at acceptance or later.
+export async function recordPayment(id, data, actor) {
+  const method = typeof data === 'string' ? data : (data && data.method);
+  const amount = data && typeof data === 'object' ? data.amount : undefined;
   return mutateOrder(id, async (o) => {
-    if (o.paymentStatus === 'paid') throw httpError(409, 'Order is already paid');
-    await applyPayment(o, method, actor);
+    if (o.paymentStatus === 'paid') throw httpError(409, 'This order is already fully paid.');
+    const price = Number(o.price) || 0;
+    const remaining = round2(price - (Number(o.amountPaid) || 0));
+    const amt = (amount == null || amount === '') ? remaining : round2(Number(amount));
+    if (!(amt > 0)) throw httpError(400, 'Enter a payment amount greater than zero.');
+    if (amt > remaining + 0.001) throw httpError(400, `That's more than the ${remaining} still owed.`);
+    if (amt < remaining - 0.001 && !canPartial(actor)) {
+      throw httpError(403, 'You are not allowed to record a partial payment — collect the full amount or ask an admin.');
+    }
+    await applyPayment(o, { amount: amt, method }, actor);
     return o;
   });
 }
 
-async function applyPayment(o, method, actor) {
-  o.paymentStatus = 'paid';
-  o.paymentMethod = method === 'card' ? 'card' : (method === 'cash' ? 'cash' : (o.paymentMethod || 'cash'));
+// Apply a payment amount to the order ledger and recompute the status.
+async function applyPayment(o, { amount, method } = {}, actor) {
+  const price = Number(o.price) || 0;
+  o.amountPaid = Number(o.amountPaid) || 0;
+  const remaining = round2(price - o.amountPaid);
+  let amt = (amount == null || amount === '') ? remaining : round2(Number(amount));
+  if (!(amt > 0)) return 0;
+  if (amt > remaining + 0.001) amt = remaining; // never overpay
+  const m = method === 'card' ? 'card' : 'cash';
+  const shift = actor?.id ? await getOpenShiftFor(actor.id) : null;
+  o.payments = o.payments || [];
+  o.payments.push({ id: newId('pay'), amount: amt, method: m, at: nowIso(), by: actorRef(actor), shiftId: shift ? shift.id : null });
+  o.amountPaid = round2(o.amountPaid + amt);
+  o.paymentStatus = o.amountPaid >= price - 0.001 ? 'paid' : 'partial';
+  o.paymentMethod = m;
   o.paidAt = nowIso();
   o.paidBy = actorRef(actor);
-  const shift = actor?.id ? await getOpenShiftFor(actor.id) : null;
   o.paidShiftId = shift ? shift.id : null;
-  addLog(o, actor, 'payment', `Payment received · ${o.paymentMethod}${shift ? ' · shift ' + shift.type : ''}`);
+  const label = o.paymentStatus === 'paid' ? 'Payment' : 'Partial payment';
+  addLog(o, actor, 'payment', `${label} · ${m} · ${amt}${o.paymentStatus === 'partial' ? ` (paid ${o.amountPaid} of ${price})` : ''}${shift ? ' · shift ' + shift.type : ''}`);
+  return amt;
 }
 
 export async function modifyOrder(id, patch, actor) {
@@ -433,11 +465,11 @@ export async function modifyOrder(id, patch, actor) {
     if (patch.paymentTiming != null) set('paymentTiming', patch.paymentTiming === 'now' ? 'now' : 'pickup', 'timing');
     if (patch.paymentStatus != null) {
       if (patch.paymentStatus === 'paid' && o.paymentStatus !== 'paid') {
-        await applyPayment(o, patch.paymentMethod, actor);
-        changes.push('payment: unpaid → paid');
-      } else if (patch.paymentStatus !== 'paid' && o.paymentStatus === 'paid') {
-        o.paymentStatus = 'unpaid'; o.paidAt = null; o.paidBy = null; o.paidShiftId = null;
-        changes.push('payment: paid → unpaid');
+        await applyPayment(o, { method: patch.paymentMethod }, actor); // pays the remainder
+        changes.push('payment → paid');
+      } else if (patch.paymentStatus === 'unpaid' && o.paymentStatus !== 'unpaid') {
+        o.paymentStatus = 'unpaid'; o.amountPaid = 0; o.payments = []; o.paidAt = null; o.paidBy = null; o.paidShiftId = null;
+        changes.push('payment reset → unpaid');
       }
     }
     if (changes.length) addLog(o, actor, 'modified', changes.join(' · '));
@@ -574,12 +606,11 @@ export async function revenueReport({ from, to, shift } = {}) {
   if (shiftFilter) inRange = inRange.filter((o) => shiftOf(o.acceptedAt || o.createdAt) === shiftFilter);
 
   const revenue = sum(inRange.map((o) => Number(o.price) || 0));
-  const paid = inRange.filter((o) => o.paymentStatus === 'paid');
-  const unpaid = inRange.filter((o) => o.paymentStatus !== 'paid');
-  const byMethod = {
-    cash: sum(paid.filter((o) => o.paymentMethod === 'cash').map((o) => Number(o.price) || 0)),
-    card: sum(paid.filter((o) => o.paymentMethod === 'card').map((o) => Number(o.price) || 0)),
-  };
+  const collected = sum(inRange.map((o) => Number(o.amountPaid) || 0));
+  // Cash/card split from the actual payment ledger (handles partial payments).
+  let cashCollected = 0; let cardCollected = 0;
+  for (const o of inRange) for (const p of (o.payments || [])) { if (p.method === 'card') cardCollected += Number(p.amount) || 0; else cashCollected += Number(p.amount) || 0; }
+  const byMethod = { cash: round2(cashCollected), card: round2(cardCollected) };
   const totalItems = sum(inRange.map((o) => o.items));
   const totalLoads = sum(inRange.map((o) => o.loads));
 
@@ -600,7 +631,7 @@ export async function revenueReport({ from, to, shift } = {}) {
   for (const o of inRange) {
     const s = byShift[shiftOf(o.acceptedAt || o.createdAt)];
     s.orders += 1; s.revenue += Number(o.price) || 0; s.loads += o.loads;
-    if (o.paymentStatus === 'paid') s.collected += Number(o.price) || 0;
+    s.collected += Number(o.amountPaid) || 0;
   }
   Object.values(byShift).forEach((s) => { s.revenue = round2(s.revenue); s.collected = round2(s.collected); });
 
@@ -618,7 +649,7 @@ export async function revenueReport({ from, to, shift } = {}) {
     bump(o.cleaningBy, 'cleaned');
     bump(o.readyBy, 'ready');
     bump(o.completedBy, 'completed');
-    if (o.paymentStatus === 'paid' && o.paidBy) bump(o.paidBy, 'payments', Number(o.price) || 0);
+    for (const p of (o.payments || [])) bump(p.by, 'payments', Number(p.amount) || 0);
   }
   const byStaff = Object.values(staff).map((s) => ({ ...s, collected: round2(s.collected) }))
     .sort((a, b) => b.collected - a.collected);
@@ -629,13 +660,14 @@ export async function revenueReport({ from, to, shift } = {}) {
     totals: {
       orders: inRange.length,
       revenue: round2(revenue),
-      collected: round2(sum(paid.map((o) => Number(o.price) || 0))),
-      outstanding: round2(sum(unpaid.map((o) => Number(o.price) || 0))),
+      collected: round2(collected),
+      outstanding: round2(revenue - collected),
       items: totalItems,
       loads: totalLoads,
       avgOrderValue: inRange.length ? round2(revenue / inRange.length) : 0,
-      paidCount: paid.length,
-      unpaidCount: unpaid.length,
+      paidCount: inRange.filter((o) => o.paymentStatus === 'paid').length,
+      partialCount: inRange.filter((o) => o.paymentStatus === 'partial').length,
+      unpaidCount: inRange.filter((o) => o.paymentStatus === 'unpaid').length,
     },
     byMethod: { cash: round2(byMethod.cash), card: round2(byMethod.card) },
     byDay,
@@ -865,16 +897,18 @@ async function shiftActivity(shift) {
   const inWin = (iso) => iso && new Date(iso).getTime() >= since;
   const received = orders.filter((o) => inWin(o.acceptedAt));
   const pickedUp = orders.filter((o) => inWin(o.completedAt));
-  const paid = orders.filter((o) => o.paidShiftId === shift.id);
   const val = (arr) => round2(sum(arr.map((o) => Number(o.price) || 0)));
+  // Payments taken during this shift, from the ledger (handles partial payments).
+  let pCount = 0; let pTotal = 0; let pCash = 0; let pCard = 0;
+  for (const o of orders) for (const p of (o.payments || [])) {
+    if (p.shiftId !== shift.id) continue;
+    pCount += 1; pTotal += Number(p.amount) || 0;
+    if (p.method === 'card') pCard += Number(p.amount) || 0; else pCash += Number(p.amount) || 0;
+  }
   return {
     received: { count: received.length, items: sum(received.map((o) => o.items)), loads: sum(received.map((o) => o.loads)), value: val(received) },
     pickedUp: { count: pickedUp.length, value: val(pickedUp) },
-    payments: {
-      count: paid.length, total: val(paid),
-      cash: val(paid.filter((o) => o.paymentMethod === 'cash')),
-      card: val(paid.filter((o) => o.paymentMethod === 'card')),
-    },
+    payments: { count: pCount, total: round2(pTotal), cash: round2(pCash), card: round2(pCard) },
   };
 }
 

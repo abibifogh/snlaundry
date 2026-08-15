@@ -128,7 +128,7 @@ export async function handleRequest({ method, path, query = {}, body = {}, heade
       }
       if (m === 'POST' && id && parts[2] === 'pay') {
         const user = await requirePerm(headers, 'takePayment');
-        return json(200, await L.recordPayment(id, body.method, user));
+        return json(200, await L.recordPayment(id, { amount: body.amount, method: body.method }, user));
       }
       if (m === 'PATCH' && id) {
         // Modifying an order: if it is already accepted (or beyond), require modifyAccepted.

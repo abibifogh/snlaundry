@@ -672,7 +672,7 @@ function orderCard(o) {
   return `<div class="ocard" onclick="openOrder('${o.id}')">
     <div class="top"><span class="num">#${o.number}</span><span class="badge b-${o.status}">${STATUS_LABEL[o.status]}</span></div>
     <div>${esc(o.guestName)} ${o.room ? `· Room ${esc(o.room)}` : ''} ${unread ? `<span class="tab-badge">${unread}✉</span>` : ''}</div>
-    <div class="meta">${o.items} items · ${o.loads} load(s) · ${money(o.price)} · ${o.status === 'new' ? paymentPref(o) : (unpaid ? '⚠ unpaid' : 'paid')}</div>
+    <div class="meta">${o.items} items · ${o.loads} load(s) · ${money(o.price)} · ${o.status === 'new' ? paymentPref(o) : paymentLabel(o)}</div>
     <div class="meta">${o.status === 'new' ? 'Placed ' + ago(o.createdAt) : 'Ready by ' + fmt(o.pickupAt)}</div>
     ${snoozed ? '<div class="meta" style="color:var(--muted)">🔕 snoozed · ' + esc(o.delayReason || 'delay noted') + '</div>' : ''}
     ${flagAccepted ? '<div class="meta" style="color:var(--danger);font-weight:600">⏰ waiting ' + ago(o.acceptedAt) + ' — follow up at laundry</div>' : ''}
@@ -688,6 +688,11 @@ function orderCard(o) {
 function paymentPref(o) {
   if (o.paymentTiming === 'now') return `pay now (${o.paymentMethod || 'cash'})`;
   return 'pay at pickup';
+}
+function paymentLabel(o) {
+  if (o.paymentStatus === 'paid') return 'paid';
+  if (o.paymentStatus === 'partial') return `partial (${money(o.amountPaid)}/${money(o.price)})`;
+  return '⚠ unpaid';
 }
 // Room input: a dropdown of admin-defined rooms, or a free-text box if none are set.
 function roomField(id, current) {
@@ -718,7 +723,7 @@ window.openOrder = async (id) => {
       <tr><td class="muted">Room name</td><td>${esc(o.room || '—')}</td></tr>
       <tr><td class="muted">Items / loads</td><td>${o.items} / ${o.loads}</td></tr>
       <tr><td class="muted">Total</td><td>${money(o.price)}</td></tr>
-      <tr><td class="muted">Payment</td><td>${o.paymentStatus === 'paid' ? 'Paid ✓ (' + (o.paymentMethod || '') + ')' + (o.paidBy ? ' · by ' + esc(o.paidBy.name) : '') : '⚠ Unpaid · guest chose ' + paymentPref(o)}</td></tr>
+      <tr><td class="muted">Payment</td><td>${o.paymentStatus === 'paid' ? 'Paid ✓ (' + (o.paymentMethod || '') + ')' + (o.paidBy ? ' · by ' + esc(o.paidBy.name) : '') : o.paymentStatus === 'partial' ? `Partial · ${money(o.amountPaid)} of ${money(o.price)} · ${money(o.price - o.amountPaid)} due` : '⚠ Unpaid · guest chose ' + paymentPref(o)}</td></tr>
       <tr><td class="muted">Ready by</td><td>${fmt(o.pickupAt)}</td></tr>
       ${o.note ? `<tr><td class="muted">Note</td><td>${esc(o.note)}</td></tr>` : ''}
       ${o.delayReason ? `<tr><td class="muted">Delay reason</td><td>${esc(o.delayReason)}${isSnoozedO(o) ? ' <span class="pill">reminder muted</span>' : ''}</td></tr>` : ''}
@@ -727,7 +732,7 @@ window.openOrder = async (id) => {
     <div id="modalMsg"></div>
     <div class="stack" style="margin-top:12px">
       ${o.status === 'new' && can('acceptOrders') ? `<button onclick="openAccept('${o.id}')">Accept order…</button>` : ''}
-      ${o.status !== 'new' && o.paymentStatus !== 'paid' && can('takePayment') ? `<button onclick="takePayment('${o.id}')">Take payment (${money(o.price)})</button>` : ''}
+      ${o.status !== 'new' && o.paymentStatus !== 'paid' && can('takePayment') ? `<button onclick="takePayment('${o.id}')">Take payment${o.paymentStatus === 'partial' ? ` (${money(o.price - o.amountPaid)} due)` : ''}</button>` : ''}
       ${nextBtn && can('advanceStatus') && !(o.status === 'ready' && state.user?.role === 'laundry') ? (o.status === 'ready' && o.paymentStatus !== 'paid'
           ? `<button disabled title="Collect payment first">${nextBtn} — collect payment first</button>`
           : `<button onclick="advance('${o.id}', true)">${nextBtn}</button>`) : ''}
@@ -845,23 +850,31 @@ window.reportDelay = async (id) => {
 };
 window.takePayment = async (id) => {
   const o = await api('GET', `/orders/${id}`);
+  const paidSoFar = Number(o.amountPaid) || 0;
+  const remaining = Math.max(0, round2m((Number(o.price) || 0) - paidSoFar));
+  const partial = can('partialPayment');
   openModal(`
     <button class="ghost small close" onclick="closeModal()">✕</button>
     <h3>Take payment · #${o.number}</h3>
-    <p class="hint">${esc(o.guestName)} · ${money(o.price)} · guest chose ${paymentPref(o)}</p>
+    <p class="hint">${esc(o.guestName)} · total ${money(o.price)}${paidSoFar > 0 ? ` · already paid ${money(paidSoFar)}` : ''} · <b>${money(remaining)} due</b></p>
     <div id="payMsg"></div>
+    <label>Amount (${cur()})</label>
+    <input id="payAmount" type="number" step="0.01" min="0" max="${remaining}" value="${remaining.toFixed(2)}" ${partial ? '' : 'readonly'}>
+    <p class="muted" style="font-size:12px;margin:6px 0 0">${partial ? `Enter less than ${money(remaining)} to record a partial payment.` : 'Full amount only — partial payments require permission.'}</p>
     <label>Payment method</label>
     <div class="choice">
       <label><input type="radio" name="paym" value="cash" ${o.paymentMethod !== 'card' ? 'checked' : ''} /><span>Cash</span></label>
       <label><input type="radio" name="paym" value="card" ${o.paymentMethod === 'card' ? 'checked' : ''} /><span>Card</span></label>
     </div>
-    <button class="btn-full" style="margin-top:16px" onclick="doPay('${o.id}')">Record payment of ${money(o.price)}</button>
+    <button class="btn-full" style="margin-top:16px" onclick="doPay('${o.id}')">Record payment</button>
   `);
 };
+function round2m(n) { return Math.round((Number(n) || 0) * 100) / 100; }
 window.doPay = async (id) => {
   try {
     const method = document.querySelector('input[name="paym"]:checked').value;
-    await api('POST', `/orders/${id}/pay`, { method });
+    const amount = $('#payAmount') ? $('#payAmount').value : '';
+    await api('POST', `/orders/${id}/pay`, { amount, method });
     closeModal(); await refreshShift(); renderTab();
   } catch (e) { notice($('#payMsg'), 'err', e.message); }
 };

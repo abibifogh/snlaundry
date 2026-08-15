@@ -45,7 +45,8 @@ Runs entirely on **GitHub + Netlify**. No separate database server:
 - Clean neutral theme; accent colour, **hover-highlight colour** (default `#FFF8ED`), logo and name are all set in Settings.
 - Guest chooses payment at order time: **Pay now** (cash or card) or **Pay at pickup** (the default). Name, item count and payment choice are always required.
 - **Admin-controlled required fields** (Settings → Required fields): make guest email required or optional, and require a room to be selected when accepting.
-- An order **cannot be marked picked up until payment is collected**.
+- An order **cannot be marked picked up until payment is collected** (fully).
+- **Partial payments** — admin and users granted the *partialPayment* permission can record part of the amount; the order shows *partial (paid/total)*, tracks every payment in a ledger, and still can't be picked up until fully paid. Users without the permission can only take the full amount.
 - **Reverse** an order a stage (e.g. ready → cleaning) — admins and any cashier granted the *reverseStatus* permission.
 - Reports show **who** accepted / cleaned / marked ready / took payment, plus breakdowns **by shift** (AM 06–14, PM 14–22, Night 22–06) and **by staff**. The report can also be **filtered and exported (CSV/PDF) to a single shift** within any date range.
 - **Shift handovers:** opening *and* closing a shift lists the laundry currently in progress (with **unpaid items flagged**) and requires the receptionist to tick the items and acknowledge they've physically checked the laundry area. Closing also shows a **summary of the shift's activity** (laundry received, payments taken with cash/card split, and picked up). No cash counting. The shift (AM/PM/Night) is **auto-selected for the current time** and can't be set to a different one.
