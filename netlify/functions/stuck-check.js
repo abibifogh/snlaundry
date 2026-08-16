@@ -4,9 +4,25 @@
 // admin-set quiet hours and repeat interval, and repeats the reminder until the
 // order moves on.
 
-import { getSettings, findFollowUpOrders, markFollowedUp, anyShiftOpen, getMeta, setMeta } from './lib/logic.js';
-import { sendEmail, followUpEmail } from './lib/email.js';
+import { getSettings, findFollowUpOrders, markFollowedUp, anyShiftOpen, getMeta, setMeta, findReadyTooLong, markReadyAlerted, alertUserEmails } from './lib/logic.js';
+import { sendEmail, followUpEmail, readyTooLongEmail } from './lib/email.js';
 import { sendPushToAll, sendPushTo } from './lib/push.js';
+
+// Email admin + chosen staff when orders sit at "ready" too long.
+async function readyTooLongAlert(settings) {
+  const stuck = await findReadyTooLong(settings);
+  if (!stuck.length) return { readyStuck: 0 };
+  const recipients = [...new Set([
+    settings.adminEmail,
+    ...(await alertUserEmails(settings.readyAlertUserIds || [])),
+  ].map((e) => (e || '').trim().toLowerCase()).filter(Boolean))];
+  if (recipients.length) {
+    const { subject, html } = readyTooLongEmail(stuck, settings, settings.readyStuckHours || 12);
+    for (const to of recipients) await sendEmail({ to, subject, html });
+  }
+  await markReadyAlerted(stuck.map((o) => o.id));
+  return { readyStuck: stuck.length, readyRecipients: recipients.length };
+}
 
 const SHIFT_REMINDER_EVERY_MS = 30 * 60000;
 
@@ -28,8 +44,9 @@ async function shiftOpenReminder() {
 export async function runStuckCheck() {
   const settings = await getSettings();
   const shift = await shiftOpenReminder();
+  const ready = await readyTooLongAlert(settings); // ready-for-pickup > threshold
   const due = await findFollowUpOrders(settings); // [] during quiet hours
-  if (!due.length) return { alerted: 0, ...shift };
+  if (!due.length) return { alerted: 0, ...shift, ...ready };
 
   // Email everyone on the alert list.
   const recipients = [...new Set(
@@ -51,7 +68,7 @@ export async function runStuckCheck() {
   });
 
   await markFollowedUp(due.map((o) => o.id));
-  return { alerted: due.length, recipients, ...shift };
+  return { alerted: due.length, recipients, ...shift, ...ready };
 }
 
 export const handler = async () => {

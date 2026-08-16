@@ -46,6 +46,7 @@ Runs entirely on **GitHub + Netlify**. No separate database server:
 - Guest chooses payment at order time: **Pay now** (cash or card) or **Pay at pickup** (the default). Name, item count and payment choice are always required.
 - **Admin-controlled required fields** (Settings → Required fields): make guest email required or optional, and require a room to be selected when accepting.
 - An order **cannot be marked picked up until payment is collected** (fully).
+- **Ready-too-long email**: if an order stays "ready for pickup" beyond a set time (default 12h), the admin — plus any staff the admin ticks in Settings → Ready-for-pickup alert — get an email to chase the guest.
 - **Partial payments** — admin and users granted the *partialPayment* permission can record part of the amount; the order shows *partial (paid/total)*, tracks every payment in a ledger, and still can't be picked up until fully paid. Users without the permission can only take the full amount.
 - **Reverse** an order a stage (e.g. ready → cleaning) — admins and any cashier granted the *reverseStatus* permission.
 - Reports show **who** accepted / cleaned / marked ready / took payment, plus breakdowns **by shift** (AM 06–14, PM 14–22, Night 22–06) and **by staff**. The report can also be **filtered and exported (CSV/PDF) to a single shift** within any date range.

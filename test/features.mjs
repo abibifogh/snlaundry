@@ -13,7 +13,8 @@ delete process.env.RESEND_API_KEY;
 
 const { handleRequest } = await import('../netlify/functions/api.js');
 const { sentLog, clearSentLog, inviteEmail } = await import('../netlify/functions/lib/email.js');
-const { effectiveBaseUrl, inQuietHours, findFollowUpOrders } = await import('../netlify/functions/lib/logic.js');
+const { effectiveBaseUrl, inQuietHours, findFollowUpOrders, findReadyTooLong } = await import('../netlify/functions/lib/logic.js');
+const { runStuckCheck } = await import('../netlify/functions/stuck-check.js');
 const featStore = await import('../netlify/functions/lib/store.js');
 
 let pass = 0, fail = 0; const out = [];
@@ -345,6 +346,26 @@ try {
   ok('can mark picked up once fully paid', r.status === 200 && r.body.status === 'completed');
   r = await api('GET', '/api/report', { headers: H(adminT) });
   ok('report by-method includes the ledger split (cash 4 + card 6)', r.body.byMethod.cash >= 4 && r.body.byMethod.card >= 6, JSON.stringify(r.body.byMethod));
+
+  section('Ready-for-pickup 12h alert (admin + chosen users)');
+  await api('PATCH', `/api/cashiers/${yawId}`, { headers: H(adminT), body: { email: 'yaw@example.com' } });
+  await api('PUT', '/api/settings', { headers: H(adminT), body: { readyStuckHours: 12, adminEmail: 'admin@x.com', readyAlertUserIds: [yawId], followUpHours: 1000, quietFrom: 0, quietTo: 0 } });
+  const rr = await api('POST', '/api/orders', { body: { guestName: 'Ready G', guestEmail: 'ready@example.com', items: 2, paymentTiming: 'pickup' } });
+  await api('POST', `/api/orders/${rr.body.id}/accept`, { headers: H(adminT), body: { room: 'X', paymentStatus: 'paid', paymentMethod: 'cash' } });
+  await api('POST', `/api/orders/${rr.body.id}/advance`, { headers: H(adminT), body: {} }); // cleaning
+  await api('POST', `/api/orders/${rr.body.id}/advance`, { headers: H(adminT), body: {} }); // ready
+  let rords = await featStore.getCollection('orders');
+  rords.find((o) => o.id === rr.body.id).readyAt = new Date(Date.now() - 13 * 3600000).toISOString(); // ready 13h ago
+  await featStore.saveCollection('orders', rords);
+  const readyStuck = await findReadyTooLong();
+  ok('order ready >12h is detected', readyStuck.some((o) => o.id === rr.body.id));
+  clearSentLog();
+  let rc = await runStuckCheck();
+  ok('ready alert reports it', rc.readyStuck >= 1, JSON.stringify(rc));
+  ok('email went to admin', sentLog().some((e) => e.to === 'admin@x.com' && /ready but not picked/i.test(e.subject)));
+  ok('email went to the chosen staff user', sentLog().some((e) => e.to === 'yaw@example.com' && /ready but not picked/i.test(e.subject)));
+  rc = await runStuckCheck();
+  ok('does not re-alert the same ready order', !(rc.readyStuck >= 1));
 
   section('Admin: delete orders in a timeframe');
   const before = (await api('GET', '/api/orders', { headers: H(adminT) })).body.length;

@@ -1128,6 +1128,7 @@ const CURRENCIES = [
 async function renderSettings(view) {
   const s = state.settings = await api('GET', '/settings');
   const seq = await api('GET', '/sequence').catch(() => ({ next: '—' }));
+  const staffList = await api('GET', '/cashiers').catch(() => []);
   const orderUrl = (s.baseUrl || location.origin) + '/order';
   view.innerHTML = `<h2>Settings</h2>
     <div id="setMsg"></div>
@@ -1191,6 +1192,17 @@ async function renderSettings(view) {
       </div>
       <label>Additional alert recipients <span class="muted">(comma or new-line separated)</span></label>
       <textarea id="stAlertRecipients" placeholder="manager@hostelaccra.com, owner@hostelaccra.com">${esc((s.alertRecipients || []).join(', '))}</textarea>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">Ready-for-pickup alert</h3>
+      <p class="hint">Email the admin (and any staff you tick below) when an order stays "ready for pickup" longer than the set time.</p>
+      <label>Alert after ready for (hours)</label>
+      <input id="stReadyStuck" type="number" min="0.25" step="0.25" value="${s.readyStuckHours}">
+      <label>Also email these staff</label>
+      <div style="background:#f9fafb;border:1px solid var(--line);border-radius:10px;padding:8px 12px">
+        ${staffList.length ? staffList.map(c => `<label style="display:flex;gap:8px;align-items:center;font-weight:400;margin:4px 0;font-size:14px"><input type="checkbox" class="readyUser" value="${c.id}" style="width:auto" ${(s.readyAlertUserIds || []).includes(c.id) ? 'checked' : ''} ${c.email ? '' : 'disabled'}> ${esc(c.name)} <span class="muted">${c.email ? '(' + esc(c.email) + ')' : '— no email set'}</span></label>`).join('') : '<p class="muted" style="font-size:13px;margin:2px 0">No staff added yet.</p>'}
+      </div>
+      <p class="muted" style="font-size:12px;margin-top:6px">Staff need an email address (set it under Cashiers) to be selectable.</p>
     </div>
     <div class="card">
       <h3 style="margin-top:0">Public site URL</h3>
@@ -1332,6 +1344,8 @@ window.saveSettings = async () => {
     turnaroundHours: $('#stTurn').value,
     followUpHours: $('#stFollowUp').value, followUpEveryHours: $('#stFollowEvery').value,
     pickupLeadHours: $('#stPickupLead').value,
+    readyStuckHours: $('#stReadyStuck').value,
+    readyAlertUserIds: [...document.querySelectorAll('.readyUser:checked')].map(c => c.value),
     quietFrom: $('#stQuietFrom').value, quietTo: $('#stQuietTo').value,
     adminEmail: $('#stAdminEmail').value.trim(), receptionEmail: $('#stRecEmail').value.trim(),
     alertRecipients: $('#stAlertRecipients').value,

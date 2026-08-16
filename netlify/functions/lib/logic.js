@@ -58,6 +58,8 @@ export function defaultSettings() {
     followUpHours: 1, // accepted orders older than this need follow-up
     followUpEveryHours: 1, // repeat the email/push reminder this often
     pickupLeadHours: 3, // start "prepare for pickup" reminders this many hours before pickup
+    readyStuckHours: 12, // email if an order sits at "ready" longer than this
+    readyAlertUserIds: [], // staff (besides admin) who also get the ready-stuck email
     quietFrom: 18, // no reminders from 18:00 (6 PM) …
     quietTo: 7, // … until 07:00 (7 AM) next day
     adminEmail: '',
@@ -95,6 +97,8 @@ export async function updateSettings(patch) {
   next.followUpHours = Math.max(0.25, Number(next.followUpHours) || 1);
   next.followUpEveryHours = Math.max(0.25, Number(next.followUpEveryHours) || 1);
   next.pickupLeadHours = Math.max(0, Number(next.pickupLeadHours) || 3);
+  next.readyStuckHours = Math.max(0.25, Number(next.readyStuckHours) || 12);
+  next.readyAlertUserIds = Array.isArray(next.readyAlertUserIds) ? [...new Set(next.readyAlertUserIds.map(String))] : [];
   next.quietFrom = clampHour(next.quietFrom, 18);
   next.quietTo = clampHour(next.quietTo, 7);
   next.rooms = normalizeRooms(next.rooms);
@@ -368,6 +372,7 @@ export async function advanceStatus(id, target, actor) {
     o.status = expected;
     o.delayReasonAt = null; // moving on clears any delay snooze
     if (STAGE_ACTOR_FIELD[expected]) o[STAGE_ACTOR_FIELD[expected]] = actorRef(actor);
+    if (expected === 'ready') { o.readyAt = nowIso(); o.readyAlertedAt = null; }
     if (expected === 'completed') o.completedAt = nowIso();
     addLog(o, actor, 'status', `Status → ${expected}`);
     if (['cleaning', 'ready', 'completed'].includes(expected)) {
@@ -785,6 +790,31 @@ export async function setDelayReason(id, reason, actor) {
     addLog(o, actor, 'delay', `Delay reason (${o.status}): ${o.delayReason}`);
     return o;
   });
+}
+
+// Orders that have sat at "ready for pickup" longer than readyStuckHours and
+// haven't been alerted yet.
+export async function findReadyTooLong(settings, now = Date.now()) {
+  const s = settings || (await getSettings());
+  const orders = await getCollection(K_ORDERS);
+  const cutoff = now - (s.readyStuckHours || 12) * 3600000;
+  return orders.filter((o) => o.status === 'ready' && o.readyAt && new Date(o.readyAt).getTime() < cutoff && !o.readyAlertedAt);
+}
+
+export async function markReadyAlerted(ids, now = Date.now()) {
+  const orders = await getCollection(K_ORDERS);
+  const set = new Set(ids);
+  const iso = new Date(now).toISOString();
+  orders.forEach((o) => { if (set.has(o.id)) o.readyAlertedAt = iso; });
+  await saveCollection(K_ORDERS, orders);
+}
+
+// Emails of the staff members chosen to also receive the ready-stuck alert.
+export async function alertUserEmails(ids = []) {
+  if (!ids.length) return [];
+  const set = new Set(ids.map(String));
+  const cashiers = await getCollection(K_CASHIERS);
+  return cashiers.filter((c) => set.has(c.id) && validEmail(c.email)).map((c) => c.email);
 }
 
 export async function markFollowedUp(ids, now = Date.now()) {

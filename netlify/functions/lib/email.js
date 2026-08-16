@@ -212,6 +212,22 @@ export function inviteEmail(cashier, settings, opts = {}) {
   };
 }
 
+export function readyTooLongEmail(orders, settings, hours) {
+  const rows = orders.map((o) => `<tr>
+        <td style="padding:6px 8px;border-bottom:1px solid #eee">#${o.number}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #eee">${escapeHtml(o.guestName)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #eee">${o.room ? escapeHtml(o.room) : '—'}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #eee">${hoursSince(o.readyAt)}h</td>
+      </tr>`).join('');
+  const body = `<p><strong>${orders.length} order(s)</strong> have been <b>ready for pickup</b> for more than ${hours}h and still haven't been collected:</p>
+    <table style="width:100%;border-collapse:collapse;font-size:14px;margin-top:10px">
+      <tr style="text-align:left;color:#6b7280"><th style="padding:6px 8px">Order</th><th style="padding:6px 8px">Guest</th><th style="padding:6px 8px">Room</th><th style="padding:6px 8px">Ready for</th></tr>
+      ${rows}
+    </table>
+    <p style="margin-top:14px">Please follow up with the guest to collect their laundry.</p>`;
+  return { subject: `🧺 ${orders.length} order(s) ready but not picked up (${hours}h+)`, html: shell(settings, body) };
+}
+
 export function followUpEmail(orders, settings) {
   const rows = orders
     .map((o) => {
