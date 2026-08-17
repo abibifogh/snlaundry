@@ -432,6 +432,41 @@ try {
     await featStore.saveCollection('orders', keep);
   }
 
+  section('Status-only payments from the earliest builds still count');
+  {
+    const keep = await featStore.getCollection('orders');
+    const jess = { id: 'u_jess', name: 'Jessica' };
+    // Exactly what the original applyPayment() left behind: status, method, paidAt,
+    // paidBy — no amountPaid, no ledger. Its log line read "Payment received · card".
+    await featStore.saveCollection('orders', keep.concat([{
+      id: 'ord_status_only', number: 1039, status: 'completed', guestName: 'V', room: "Milly's",
+      items: 10, loads: 1, price: 70,
+      createdAt: '2026-08-13T08:30:00.000Z', acceptedAt: '2026-08-13T08:30:00.000Z', acceptedBy: jess,
+      paymentStatus: 'paid', paymentMethod: 'card',
+      paidAt: '2026-08-13T09:55:00.000Z', paidBy: jess, paidShiftId: 'sh_1',
+    }]));
+
+    const rep = await revenueReport({ from: '2026-08-13T00:00:00.000Z', to: '2026-08-13T23:59:59.999Z' });
+    const j = (rep.byStaff || []).find((s) => s.name === 'Jessica') || {};
+    ok('a paid order with no amount recorded counts at its price', rep.totals.collected === 70, JSON.stringify(rep.totals));
+    ok('it keeps the card/cash method it was taken with', rep.byMethod.card === 70 && rep.byMethod.cash === 0, JSON.stringify(rep.byMethod));
+    ok('it is credited to whoever took it', j.payments === 1 && j.collected === 70 && j.card === 70, JSON.stringify(j));
+    ok('it lands in the shift it was taken in', rep.byShift[shiftOf('2026-08-13T09:55:00.000Z')].collected === 70, JSON.stringify(rep.byShift));
+    ok('an order marked paid is not also reported as owing', rep.totals.outstanding === 0, JSON.stringify(rep.totals));
+
+    // A 'partial' order with no figure is unknowable — it must not be guessed at.
+    await featStore.saveCollection('orders', keep.concat([{
+      id: 'ord_partial_only', number: 1044, status: 'completed', guestName: 'W', room: '2',
+      items: 10, loads: 1, price: 70,
+      createdAt: '2026-08-13T08:30:00.000Z', acceptedAt: '2026-08-13T08:30:00.000Z', acceptedBy: jess,
+      paymentStatus: 'partial', paymentMethod: 'cash', paidAt: '2026-08-13T09:55:00.000Z', paidBy: jess,
+    }]));
+    const rep2 = await revenueReport({ from: '2026-08-13T00:00:00.000Z', to: '2026-08-13T23:59:59.999Z' });
+    ok('a partial payment with no amount is not invented', rep2.totals.collected === 0 && rep2.totals.outstanding === 70, JSON.stringify(rep2.totals));
+
+    await featStore.saveCollection('orders', keep);
+  }
+
   section('Ready-for-pickup 12h alert (admin + chosen users)');
   await api('PATCH', `/api/cashiers/${yawId}`, { headers: H(adminT), body: { email: 'yaw@example.com' } });
   await api('PUT', '/api/settings', { headers: H(adminT), body: { readyStuckHours: 12, adminEmail: 'admin@x.com', readyAlertUserIds: [yawId], followUpHours: 1000, quietFrom: 0, quietTo: 0 } });

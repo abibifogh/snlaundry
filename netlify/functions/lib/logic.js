@@ -647,8 +647,10 @@ export async function revenueReport({ from, to, shift } = {}) {
   const cashCollected = sum(paymentsInRange.filter((p) => p.method !== 'card').map((p) => p.amount));
   const cardCollected = sum(paymentsInRange.filter((p) => p.method === 'card').map((p) => p.amount));
   const byMethod = { cash: round2(cashCollected), card: round2(cardCollected) };
-  // What's still owed on orders that were accepted within this period.
-  const outstanding = sum(inRange.map((o) => Math.max(0, round2((Number(o.price) || 0) - (Number(o.amountPaid) || 0)))));
+  // What's still owed on orders that were accepted within this period. Uses the same
+  // reading of "paid" as the collected figures, so an order marked paid never shows
+  // up as owing its full price just because it predates the amountPaid field.
+  const outstanding = sum(inRange.map((o) => Math.max(0, round2((Number(o.price) || 0) - amountPaidOf(o)))));
 
   // Daily breakdown.
   const byDayMap = {};
@@ -746,6 +748,20 @@ function rangeEnd(to) {
   return d;
 }
 
+// What an order has actually been paid.
+//
+// The earliest builds recorded a payment as a status and nothing more — they set
+// paymentStatus / paymentMethod / paidAt / paidBy but never wrote an amount, because
+// amountPaid and the payments ledger did not exist yet. Their order log still reads
+// "Payment received · card · shift AM". An order marked paid that carries no figure
+// was paid in full, so its price is the amount. A 'partial' order with no figure is
+// unknowable and stays at zero rather than being guessed at.
+export function amountPaidOf(o) {
+  const recorded = Number(o.amountPaid) || 0;
+  if (recorded > 0) return round2(recorded);
+  return o.paymentStatus === 'paid' ? round2(Number(o.price) || 0) : 0;
+}
+
 // Payments for reporting, as a flat list of "money that changed hands".
 // The ledger is authoritative where it exists, but an order can carry money that
 // never made it into the ledger — orders paid before the ledger existed, or a
@@ -753,7 +769,7 @@ function rangeEnd(to) {
 // accounts for is emitted as one synthetic entry so no collected money is dropped.
 function effectivePayments(o) {
   const ledger = (o.payments || []).filter((p) => (Number(p.amount) || 0) > 0);
-  const unledgered = round2((Number(o.amountPaid) || 0) - sum(ledger.map((p) => Number(p.amount) || 0)));
+  const unledgered = round2(amountPaidOf(o) - sum(ledger.map((p) => Number(p.amount) || 0)));
   if (unledgered <= 0.001) return ledger;
   return ledger.concat([{
     amount: unledgered,
