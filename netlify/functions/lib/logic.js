@@ -3,7 +3,7 @@
 
 import { readJSON, writeJSON, getCollection, saveCollection } from './store.js';
 import {
-  hashPin, verifyPin, signToken, defaultCashierPermissions, defaultLaundryPermissions, newId,
+  hashPin, verifyPin, signToken, defaultCashierPermissions, defaultLaundryPermissions, newId, can,
 } from './auth.js';
 
 const ROLES = ['admin', 'cashier', 'laundry'];
@@ -19,6 +19,7 @@ const K_CASHIERS = 'cashiers';
 const K_ORDERS = 'orders';
 const K_META = 'meta';
 const K_SHIFTS = 'shifts';
+const K_DISCOUNTS = 'discounts';
 
 export const STATUSES = ['new', 'accepted', 'cleaning', 'ready', 'completed', 'cancelled'];
 const FLOW = { accepted: 'cleaning', cleaning: 'ready', ready: 'completed' };
@@ -337,10 +338,17 @@ export async function acceptOrder(id, data, actor) {
     } else {
       o.price = computed;
     }
+    o.listPrice = o.price;
     // Default pickup = 6:00 PM the following day, unless reception picked one.
     o.pickupAt = data.pickupAt || nextDaySixPM();
+    // A discount code may be applied right at acceptance, before any payment.
+    let discountNote = '';
+    if (data.discountCode) {
+      const applied = await applyDiscountToOrder(o, data.discountCode, actor);
+      discountNote = ` · discount ${applied.code} −${applied.amount}`;
+    }
     addLog(o, actor, 'accepted',
-      `Accepted · room ${o.room || '—'} · ${settings.currency.symbol}${o.price} · ready by ${o.pickupAt}${priceNote}`);
+      `Accepted · room ${o.room || '—'} · ${settings.currency.symbol}${o.price} · ready by ${o.pickupAt}${priceNote}${discountNote}`);
     // Reception may collect payment right at acceptance (full, or a partial amount
     // if allowed).
     if (data.paymentStatus === 'paid' || (data.amountPaid != null && data.amountPaid !== '')) {
@@ -463,8 +471,26 @@ export async function modifyOrder(id, patch, actor) {
         const reason = String(patch.priceReason || '').trim();
         if (!reason) throw httpError(400, 'Please give a reason for changing the price.');
         changes.push(`price: ${settings.currency.symbol}${o.price} → ${settings.currency.symbol}${np} (reason: ${reason})`);
+        // An edited price becomes the new pre-discount price; any discount on the
+        // order is then recalculated against it below.
+        o.listPrice = np;
         o.price = np;
+        if (o.discount) {
+          const amount = discountAmountFor(np, o.discount);
+          o.discount = { ...o.discount, amount };
+          o.price = round2(np - amount);
+          changes.push(`discount ${o.discount.code} recalculated: −${amount}`);
+        }
+        repriceStatus(o);
       }
+    }
+    // Discounts: apply/replace a code, or take one off.
+    if (patch.removeDiscount) {
+      const gone = await removeDiscountFromOrder(o, actor);
+      if (gone) changes.push(`discount ${gone.code} removed`);
+    } else if (patch.discountCode) {
+      const applied = await applyDiscountToOrder(o, patch.discountCode, actor);
+      changes.push(`discount ${applied.code} applied (−${applied.amount})`);
     }
     if (patch.pickupAt != null) set('pickupAt', patch.pickupAt, 'pickup');
     if (patch.paymentTiming != null) set('paymentTiming', patch.paymentTiming === 'now' ? 'now' : 'pickup', 'timing');
@@ -491,6 +517,69 @@ export async function modifyOrder(id, patch, actor) {
   });
 }
 
+// ------------------------------------------------- Admin: repair payment data --
+// Three generations of this app recorded payments differently:
+//   1. status only      — paymentStatus/paidAt/paidBy, no amount anywhere
+//   2. amountPaid       — a total, but no per-payment ledger
+//   3. payments[]       — the ledger used today
+// Reporting reads all three, but only the ledger carries a method and a taker per
+// payment, so shift and staff figures are coarser for the older shapes. This walks
+// every order and brings it up to generation 3, inventing nothing: the amount comes
+// from the order's own price, the time from paidAt, the taker from paidBy.
+//
+// Call with { apply: false } (the default) for a dry run that reports what would
+// change. Running it twice is harmless — a repaired order no longer matches.
+export async function backfillPaymentRecords({ apply = false } = {}, actor) {
+  const orders = await getCollection(K_ORDERS);
+  const repairs = [];
+  for (const o of orders) {
+    const paid = amountPaidOf(o);
+    if (paid <= 0) continue;
+    const ledger = (o.payments || []).filter((p) => (Number(p.amount) || 0) > 0);
+    const ledgerTotal = round2(sum(ledger.map((p) => Number(p.amount) || 0)));
+    const missingLedger = round2(paid - ledgerTotal);
+    const missingAmount = round2(paid - (Number(o.amountPaid) || 0));
+    if (missingLedger <= 0.001 && missingAmount <= 0.001) continue;
+
+    const at = o.paidAt || o.acceptedAt || o.createdAt;
+    repairs.push({
+      number: o.number,
+      guestName: o.guestName,
+      amount: missingLedger > 0.001 ? missingLedger : 0,
+      amountPaidWas: round2(Number(o.amountPaid) || 0),
+      amountPaidNow: paid,
+      method: o.paymentMethod === 'card' ? 'card' : 'cash',
+      at,
+      by: nameOf(o.paidBy) || null,
+    });
+
+    if (!apply) continue;
+    if (missingAmount > 0.001) o.amountPaid = paid;
+    if (missingLedger > 0.001) {
+      o.payments = o.payments || [];
+      o.payments.push({
+        id: newId('pay'),
+        amount: missingLedger,
+        method: o.paymentMethod === 'card' ? 'card' : 'cash',
+        at,
+        by: o.paidBy || null,
+        shiftId: o.paidShiftId || null,
+        backfilled: true, // marks a reconstructed entry, not one recorded live
+      });
+    }
+    o.updatedAt = nowIso();
+    addLog(o, actor, 'payment', `Payment record repaired · ${o.paymentMethod === 'card' ? 'card' : 'cash'} · ${missingLedger > 0.001 ? missingLedger : paid}`);
+  }
+  if (apply && repairs.length) await saveCollection(K_ORDERS, orders);
+  return {
+    apply,
+    scanned: orders.length,
+    orders: repairs.length,
+    amount: round2(sum(repairs.map((r) => r.amount))),
+    repairs: repairs.sort((a, b) => a.number - b.number),
+  };
+}
+
 // Admin-only bulk delete: permanently remove orders created within a date range.
 export async function deleteOrdersInRange({ from, to } = {}) {
   const orders = await getCollection(K_ORDERS);
@@ -512,6 +601,176 @@ export async function cancelOrder(id, actor, reason) {
     addLog(o, actor, 'cancelled', reason ? `Cancelled: ${reason}` : 'Cancelled');
     return o;
   });
+}
+
+// ----------------------------------------------------------------- Discounts --
+// Admins issue named codes; reception applies one to an order. A code carries a
+// percentage or a fixed amount off, and may be limited by an expiry date, a
+// maximum number of uses, or simply switched off.
+
+export async function listDiscounts() {
+  const list = await getCollection(K_DISCOUNTS);
+  return list.map(publicDiscount).sort((a, b) => a.code.localeCompare(b.code));
+}
+
+export async function createDiscount(data, actor) {
+  const list = await getCollection(K_DISCOUNTS);
+  const code = normalizeCode(data.code);
+  if (!code) throw httpError(400, 'Give the discount a code, e.g. STAFF20.');
+  if (list.some((d) => d.code === code)) throw httpError(409, `The code ${code} is already in use.`);
+  const d = {
+    id: newId('disc'),
+    code,
+    label: String(data.label || '').trim(),
+    ...validatedDiscountValue(data),
+    expiresAt: parseExpiry(data.expiresAt),
+    maxUses: parseMaxUses(data.maxUses),
+    active: data.active !== false,
+    uses: 0,
+    createdAt: nowIso(),
+    createdBy: actorRef(actor),
+  };
+  list.push(d);
+  await saveCollection(K_DISCOUNTS, list);
+  return publicDiscount(d);
+}
+
+export async function updateDiscount(id, patch, actor) {
+  const list = await getCollection(K_DISCOUNTS);
+  const d = list.find((x) => x.id === id);
+  if (!d) throw httpError(404, 'Discount not found');
+  if (patch.code != null) {
+    const code = normalizeCode(patch.code);
+    if (!code) throw httpError(400, 'A discount needs a code.');
+    if (list.some((x) => x.id !== id && x.code === code)) throw httpError(409, `The code ${code} is already in use.`);
+    d.code = code;
+  }
+  if (patch.label != null) d.label = String(patch.label).trim();
+  if (patch.type != null || patch.value != null) {
+    Object.assign(d, validatedDiscountValue({ type: patch.type ?? d.type, value: patch.value ?? d.value }));
+  }
+  if (patch.expiresAt !== undefined) d.expiresAt = parseExpiry(patch.expiresAt);
+  if (patch.maxUses !== undefined) d.maxUses = parseMaxUses(patch.maxUses);
+  if (patch.active != null) d.active = !!patch.active;
+  d.updatedAt = nowIso();
+  d.updatedBy = actorRef(actor);
+  await saveCollection(K_DISCOUNTS, list);
+  return publicDiscount(d);
+}
+
+// Codes are kept even once spent, because orders reference them. Deleting one
+// leaves the discount already recorded on an order untouched.
+export async function deleteDiscount(id) {
+  const list = await getCollection(K_DISCOUNTS);
+  if (!list.some((x) => x.id === id)) throw httpError(404, 'Discount not found');
+  await saveCollection(K_DISCOUNTS, list.filter((x) => x.id !== id));
+  return { ok: true };
+}
+
+function normalizeCode(code) {
+  return String(code || '').trim().toUpperCase().replace(/\s+/g, '');
+}
+function validatedDiscountValue({ type, value }) {
+  const t = type === 'fixed' ? 'fixed' : 'percent';
+  const v = round2(Number(value));
+  if (!(v > 0)) throw httpError(400, 'A discount needs a value greater than zero.');
+  if (t === 'percent' && v > 100) throw httpError(400, 'A percentage discount cannot exceed 100%.');
+  return { type: t, value: v };
+}
+function parseExpiry(v) {
+  if (v == null || v === '') return null;
+  const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(v) ? `${v}T23:59:59.999` : v);
+  if (isNaN(d)) throw httpError(400, 'That expiry date is not a valid date.');
+  return d.toISOString();
+}
+function parseMaxUses(v) {
+  if (v == null || v === '') return null;
+  const n = Math.floor(Number(v));
+  if (!(n > 0)) throw httpError(400, 'Maximum uses must be a whole number greater than zero.');
+  return n;
+}
+function publicDiscount(d) {
+  return { ...d, spent: d.maxUses != null && d.uses >= d.maxUses, expired: isExpired(d) };
+}
+function isExpired(d) {
+  return !!(d.expiresAt && new Date(d.expiresAt) < new Date());
+}
+
+// How much a code takes off a given price, never more than the price itself.
+export function discountAmountFor(listPrice, d) {
+  const base = Number(listPrice) || 0;
+  const off = d.type === 'fixed' ? Number(d.value) || 0 : base * (Number(d.value) || 0) / 100;
+  return round2(Math.min(base, Math.max(0, off)));
+}
+
+// The price before any discount. Orders predating discounts only have `price`.
+function listPriceOf(o) {
+  return round2(Number(o.listPrice != null ? o.listPrice : o.price) || 0);
+}
+
+// Look a code up and confirm it can still be used.
+async function usableDiscount(code) {
+  const list = await getCollection(K_DISCOUNTS);
+  const wanted = normalizeCode(code);
+  const d = list.find((x) => x.code === wanted);
+  if (!d) throw httpError(404, `No discount with the code ${wanted}.`);
+  if (!d.active) throw httpError(409, `${d.code} is switched off.`);
+  if (isExpired(d)) throw httpError(409, `${d.code} expired on ${d.expiresAt.slice(0, 10)}.`);
+  if (d.maxUses != null && d.uses >= d.maxUses) throw httpError(409, `${d.code} has been used its maximum ${d.maxUses} time(s).`);
+  return { list, d };
+}
+
+// Put a discount on an order (replacing any existing one) and reprice it.
+// Called from inside mutateOrder, so it only touches the order in place.
+async function applyDiscountToOrder(o, code, actor) {
+  if (!can(actor, 'discount')) throw httpError(403, 'You are not allowed to apply a discount.');
+  const { list, d } = await usableDiscount(code);
+  const base = listPriceOf(o);
+  const amount = discountAmountFor(base, d);
+  const newPrice = round2(base - amount);
+  const paid = amountPaidOf(o);
+  if (newPrice < paid - 0.001) {
+    throw httpError(409, `${d.code} would bring the total to ${newPrice}, below the ${paid} already paid. Refund the difference first.`);
+  }
+  await releaseDiscount(o, list); // giving back a previously applied code
+  o.listPrice = base;
+  o.discount = { id: d.id, code: d.code, type: d.type, value: d.value, amount, by: actorRef(actor), at: nowIso() };
+  o.price = newPrice;
+  d.uses = (Number(d.uses) || 0) + 1;
+  await saveCollection(K_DISCOUNTS, list);
+  repriceStatus(o);
+  addLog(o, actor, 'discount', `Discount ${d.code} applied · −${amount} (${d.type === 'percent' ? d.value + '%' : d.value}) · total ${o.price}`);
+  return o.discount;
+}
+
+// Take a discount off an order and put the price back up.
+async function removeDiscountFromOrder(o, actor) {
+  if (!o.discount) return null;
+  if (!can(actor, 'discount')) throw httpError(403, 'You are not allowed to change a discount.');
+  const previous = o.discount;
+  const list = await getCollection(K_DISCOUNTS);
+  await releaseDiscount(o, list);
+  await saveCollection(K_DISCOUNTS, list);
+  o.price = listPriceOf(o);
+  o.discount = null;
+  repriceStatus(o);
+  addLog(o, actor, 'discount', `Discount ${previous.code} removed · total back to ${o.price}`);
+  return previous;
+}
+
+// Hand a use back to the code an order currently holds. Mutates `list` only.
+async function releaseDiscount(o, list) {
+  if (!o.discount) return;
+  const prev = list.find((x) => x.id === o.discount.id);
+  if (prev) prev.uses = Math.max(0, (Number(prev.uses) || 0) - 1);
+}
+
+// After the price moves, an order can become fully paid (or stop being so).
+function repriceStatus(o) {
+  const price = Number(o.price) || 0;
+  const paid = amountPaidOf(o);
+  if (paid <= 0) { o.paymentStatus = 'unpaid'; return; }
+  o.paymentStatus = paid >= price - 0.001 ? 'paid' : 'partial';
 }
 
 // ------------------------------------------------------------------ Messages --
@@ -578,6 +837,7 @@ export async function exportAll() {
     cashiers: await getCollection(K_CASHIERS),
     orders: await getCollection(K_ORDERS),
     shifts: await getCollection(K_SHIFTS),
+    discounts: await getCollection(K_DISCOUNTS),
     meta: await readJSON(K_META, null),
   };
 }
@@ -594,10 +854,11 @@ export async function importAll(data) {
   if (Array.isArray(data.cashiers)) await saveCollection(K_CASHIERS, data.cashiers);
   if (Array.isArray(data.orders)) await saveCollection(K_ORDERS, data.orders);
   if (Array.isArray(data.shifts)) await saveCollection(K_SHIFTS, data.shifts);
+  if (Array.isArray(data.discounts)) await saveCollection(K_DISCOUNTS, data.discounts);
   if (data.meta) await writeJSON(K_META, data.meta);
   return {
     ok: true,
-    counts: { cashiers: (data.cashiers || []).length, orders: (data.orders || []).length, shifts: (data.shifts || []).length },
+    counts: { cashiers: (data.cashiers || []).length, orders: (data.orders || []).length, shifts: (data.shifts || []).length, discounts: (data.discounts || []).length },
   };
 }
 
@@ -619,9 +880,12 @@ export async function revenueReport({ from, to, shift } = {}) {
   // Optional: restrict to a single reception shift.
   if (shiftFilter) inRange = inRange.filter((o) => shiftOf(o.acceptedAt || o.createdAt) === shiftFilter);
 
+  // Revenue is what was actually charged, so a discounted order counts at its
+  // reduced price; the amount given away is reported separately.
   const revenue = sum(inRange.map((o) => Number(o.price) || 0));
   const totalItems = sum(inRange.map((o) => o.items));
   const totalLoads = sum(inRange.map((o) => o.loads));
+  const discountedOrders = inRange.filter((o) => o.discount && (Number(o.discount.amount) || 0) > 0);
 
   // ---- Money actually collected in the period ----
   // Collected / cash / card are measured by WHEN a payment was taken and WHO took it,
@@ -675,8 +939,14 @@ export async function revenueReport({ from, to, shift } = {}) {
     const s = byShift[p.shift]; if (!s) continue;
     s.collected += p.amount;
     if (p.method === 'card') s.card += p.amount; else s.cash += p.amount;
+    // Keep the individual payments so the UI can show which orders make up the
+    // cash and card figures when the shift's Collected total is opened.
+    s.payments.push({ number: p.orderNumber, amount: round2(p.amount), method: p.method, at: p.at, by: nameOf(p.by) });
   }
-  Object.values(byShift).forEach((s) => { s.revenue = round2(s.revenue); s.collected = round2(s.collected); s.cash = round2(s.cash); s.card = round2(s.card); });
+  Object.values(byShift).forEach((s) => {
+    s.revenue = round2(s.revenue); s.collected = round2(s.collected); s.cash = round2(s.cash); s.card = round2(s.card);
+    s.payments.sort((a, b) => a.at.localeCompare(b.at));
+  });
 
   // Staff activity — who did what (from orders accepted in range) and, separately,
   // the money each person collected (from payments they took within range).
@@ -718,6 +988,9 @@ export async function revenueReport({ from, to, shift } = {}) {
       paidCount: inRange.filter((o) => o.paymentStatus === 'paid').length,
       partialCount: inRange.filter((o) => o.paymentStatus === 'partial').length,
       unpaidCount: inRange.filter((o) => o.paymentStatus === 'unpaid').length,
+      // What discounting cost over the period, on orders accepted in it.
+      discounts: round2(sum(discountedOrders.map((o) => Number(o.discount.amount) || 0))),
+      discountedCount: discountedOrders.length,
     },
     byMethod: { cash: round2(byMethod.cash), card: round2(byMethod.card) },
     byDay,
@@ -727,7 +1000,7 @@ export async function revenueReport({ from, to, shift } = {}) {
   };
 }
 
-function shiftBucket() { return { orders: 0, revenue: 0, collected: 0, cash: 0, card: 0, loads: 0 }; }
+function shiftBucket() { return { orders: 0, revenue: 0, collected: 0, cash: 0, card: 0, loads: 0, payments: [] }; }
 
 const UNATTRIBUTED_REF = { id: '__unattributed__', name: 'Unattributed' };
 
@@ -795,6 +1068,8 @@ export function reportToCsv(report) {
   lines.push(`Total items,${report.totals.items}`);
   lines.push(`Total loads,${report.totals.loads}`);
   lines.push(`Average order value (${cur}),${report.totals.avgOrderValue}`);
+  lines.push(`Discounts given (${cur}),${report.totals.discounts ?? 0}`);
+  lines.push(`Discounted orders,${report.totals.discountedCount ?? 0}`);
   lines.push('');
   lines.push('Daily breakdown');
   lines.push('Date,Orders,Loads,Items,Revenue');
@@ -807,6 +1082,15 @@ export function reportToCsv(report) {
     lines.push(`${s} (${SHIFT_LABEL[s]}),${b.orders},${b.loads},${b.revenue},${b.collected},${b.cash},${b.card}`);
   });
   lines.push('');
+  // The individual payments behind each shift's cash and card figures.
+  lines.push('Payments behind each shift total');
+  lines.push('Shift,Time,Order,Method,Amount,Taken by');
+  ['AM', 'PM', 'Night'].forEach((s) => {
+    (report.byShift[s].payments || []).forEach((p) => {
+      lines.push(`${s},${String(p.at).slice(0, 16).replace('T', ' ')},#${p.number},${p.method},${p.amount},${csv(p.by || 'Unattributed')}`);
+    });
+  });
+  lines.push('');
   lines.push('By staff (collected = payments this person took)');
   lines.push('Staff,Accepted,Cleaned,Ready,Completed,Payments,Collected,Cash,Card');
   (report.byStaff || []).forEach((s) => {
@@ -814,11 +1098,12 @@ export function reportToCsv(report) {
   });
   lines.push('');
   lines.push('Orders');
-  lines.push('Number,Date,Shift,Guest,Room,Items,Loads,Price,Payment,Method,Accepted by,Cleaned by,Ready by,Completed by,Paid by,Status');
+  lines.push('Number,Date,Shift,Guest,Room,Items,Loads,Price,Discount,Discount off,Payment,Method,Accepted by,Cleaned by,Ready by,Completed by,Paid by,Status');
   report.orders.forEach((o) => {
     lines.push([
       o.number, (o.acceptedAt || o.createdAt).slice(0, 16).replace('T', ' '), o.shift,
       csv(o.guestName), csv(o.room), o.items, o.loads, o.price ?? '',
+      o.discount ? o.discount.code : '', o.discount ? o.discount.amount : '',
       o.paymentStatus, o.paymentMethod || '',
       csv(nameOf(o.acceptedBy)), csv(nameOf(o.cleaningBy)), csv(nameOf(o.readyBy)),
       csv(nameOf(o.completedBy)), csv(nameOf(o.paidBy)), o.status,

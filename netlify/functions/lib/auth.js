@@ -61,6 +61,7 @@ export const PERMISSIONS = {
   cancelOrders: 'Cancel / delete orders',
   takePayment: 'Record payments',
   partialPayment: 'Record partial payments (less than the full amount)',
+  discount: 'Apply discount codes to orders',
   messageGuests: 'Reply to guest messages',
   viewReports: 'View revenue reports & analytics',
   exportReports: 'Export reports (CSV / PDF)',
@@ -85,6 +86,7 @@ export function defaultLaundryPermissions() {
     modifyAccepted: false,
     cancelOrders: false,
     takePayment: false,
+    discount: false,
     messageGuests: false,
     viewReports: false,
     exportReports: false,
@@ -103,6 +105,7 @@ export function defaultCashierPermissions() {
     cancelOrders: false,
     takePayment: true,
     partialPayment: false, // admin-granted only
+    discount: false, // admin-granted only
     messageGuests: true,
     viewReports: false,
     exportReports: false,
