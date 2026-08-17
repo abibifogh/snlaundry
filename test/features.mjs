@@ -13,7 +13,7 @@ delete process.env.RESEND_API_KEY;
 
 const { handleRequest } = await import('../netlify/functions/api.js');
 const { sentLog, clearSentLog, inviteEmail } = await import('../netlify/functions/lib/email.js');
-const { effectiveBaseUrl, inQuietHours, findFollowUpOrders, findReadyTooLong, revenueReport, shiftOf } = await import('../netlify/functions/lib/logic.js');
+const { effectiveBaseUrl, inQuietHours, findFollowUpOrders, findReadyTooLong, revenueReport, reportToCsv, shiftOf } = await import('../netlify/functions/lib/logic.js');
 const { runStuckCheck } = await import('../netlify/functions/stuck-check.js');
 const featStore = await import('../netlify/functions/lib/store.js');
 
@@ -486,6 +486,143 @@ try {
   ok('email went to the chosen staff user', sentLog().some((e) => e.to === 'yaw@example.com' && /ready but not picked/i.test(e.subject)));
   rc = await runStuckCheck();
   ok('does not re-alert the same ready order', !(rc.readyStuck >= 1));
+
+  section('Admin: repair payment records written by older builds');
+  {
+    const keep = await featStore.getCollection('orders');
+    const jess = { id: 'u_jess', name: 'Jessica' };
+    await featStore.saveCollection('orders', keep.concat([
+      // generation 1: status only
+      { id: 'bf1', number: 8001, status: 'completed', guestName: 'A', room: '1', items: 10, loads: 1, price: 70,
+        createdAt: '2026-08-13T08:00:00.000Z', acceptedAt: '2026-08-13T08:00:00.000Z', acceptedBy: jess,
+        paymentStatus: 'paid', paymentMethod: 'card', paidAt: '2026-08-13T09:55:00.000Z', paidBy: jess, paidShiftId: 'sh_x' },
+      // generation 2: an amount, but no ledger
+      { id: 'bf2', number: 8002, status: 'completed', guestName: 'B', room: '2', items: 10, loads: 1, price: 50,
+        createdAt: '2026-08-13T08:00:00.000Z', acceptedAt: '2026-08-13T08:00:00.000Z', acceptedBy: jess,
+        amountPaid: 50, paymentStatus: 'paid', paymentMethod: 'cash', paidAt: '2026-08-13T10:00:00.000Z', paidBy: jess },
+      // generation 3: already complete, must be left alone
+      { id: 'bf3', number: 8003, status: 'completed', guestName: 'C', room: '3', items: 10, loads: 1, price: 30,
+        createdAt: '2026-08-13T08:00:00.000Z', acceptedAt: '2026-08-13T08:00:00.000Z', acceptedBy: jess,
+        amountPaid: 30, paymentStatus: 'paid', paymentMethod: 'cash', paidAt: '2026-08-13T11:00:00.000Z', paidBy: jess,
+        payments: [{ id: 'p', amount: 30, method: 'cash', at: '2026-08-13T11:00:00.000Z', by: jess }] },
+    ]));
+
+    r = await api('POST', '/api/orders/backfill-payments', { headers: H(yawAuth.body.token), body: { apply: false } });
+    ok('non-admin cannot repair payment records', r.status === 403, `got ${r.status}`);
+
+    r = await api('POST', '/api/orders/backfill-payments', { headers: H(adminT), body: { apply: false } });
+    ok('dry run finds both older shapes and skips the current one', r.body.orders === 2 && r.body.amount === 120, JSON.stringify(r.body.repairs));
+    const untouched = (await featStore.getCollection('orders')).find((o) => o.id === 'bf1');
+    ok('dry run changes nothing', !untouched.amountPaid && !(untouched.payments || []).length);
+
+    r = await api('POST', '/api/orders/backfill-payments', { headers: H(adminT), body: { apply: true } });
+    ok('apply repairs both orders', r.body.orders === 2 && r.body.amount === 120, JSON.stringify(r.body));
+    const after = await featStore.getCollection('orders');
+    const bf1 = after.find((o) => o.id === 'bf1');
+    ok('a status-only order gains an amount and a ledger entry', bf1.amountPaid === 70 && bf1.payments.length === 1 && bf1.payments[0].amount === 70);
+    ok('the rebuilt entry keeps the original method, time and cashier', bf1.payments[0].method === 'card' && bf1.payments[0].at === '2026-08-13T09:55:00.000Z' && bf1.payments[0].by.name === 'Jessica', JSON.stringify(bf1.payments[0]));
+    ok('the rebuilt entry is marked as reconstructed', bf1.payments[0].backfilled === true);
+    ok('an amount-only order gains its ledger entry', after.find((o) => o.id === 'bf2').payments.length === 1);
+    ok('an already-complete order is untouched', after.find((o) => o.id === 'bf3').payments.length === 1);
+
+    r = await api('POST', '/api/orders/backfill-payments', { headers: H(adminT), body: { apply: true } });
+    ok('running it again finds nothing left to repair', r.body.orders === 0, JSON.stringify(r.body));
+
+    const rep = await revenueReport({ from: '2026-08-13T00:00:00.000Z', to: '2026-08-13T23:59:59.999Z' });
+    ok('the repaired money reports the same as before the repair', rep.totals.collected === 150, JSON.stringify(rep.totals));
+
+    await featStore.saveCollection('orders', keep);
+  }
+
+  section('Report: the orders behind each shift total');
+  {
+    const keep = await featStore.getCollection('orders');
+    const jess = { id: 'u_jess', name: 'Jessica' };
+    const mk = (id, number, price, method, at) => ({
+      id, number, status: 'completed', guestName: 'G', room: '1', items: 10, loads: 1, price,
+      createdAt: at, acceptedAt: at, acceptedBy: jess,
+      amountPaid: price, paymentStatus: 'paid', paymentMethod: method, paidAt: at, paidBy: jess,
+      payments: [{ id: 'p' + id, amount: price, method, at, by: jess }],
+    });
+    await featStore.saveCollection('orders', keep.concat([
+      mk('sb1', 7001, 70, 'cash', '2026-09-01T08:00:00.000Z'),
+      mk('sb2', 7002, 30, 'card', '2026-09-01T09:00:00.000Z'),
+      mk('sb3', 7003, 50, 'cash', '2026-09-01T15:00:00.000Z'),
+    ]));
+    const rep = await revenueReport({ from: '2026-09-01', to: '2026-09-01' });
+    const am = rep.byShift[shiftOf('2026-09-01T08:00:00.000Z')];
+    ok('each shift lists the payments behind its total', am.payments.length === 2, JSON.stringify(am.payments));
+    ok('the listed payments carry order, amount, method and taker', am.payments[0].number === 7001 && am.payments[0].amount === 70 && am.payments[0].method === 'cash' && am.payments[0].by === 'Jessica', JSON.stringify(am.payments[0]));
+    const cash = am.payments.filter((p) => p.method === 'cash').reduce((a, p) => a + p.amount, 0);
+    const card = am.payments.filter((p) => p.method === 'card').reduce((a, p) => a + p.amount, 0);
+    ok('they add up to the shift cash and card figures', cash === am.cash && card === am.card, `${cash}/${am.cash} ${card}/${am.card}`);
+    ok('the CSV lists them too', /Payments behind each shift total/.test(reportToCsv(rep)) && /#7001,cash,70/.test(reportToCsv(rep)), reportToCsv(rep).split('\n').filter((l) => /7001/.test(l)).join(' | '));
+    await featStore.saveCollection('orders', keep);
+  }
+
+  section('Discounts: issued by admins, applied by permitted staff');
+  {
+    r = await api('POST', '/api/discounts', { headers: H(adminT), body: { code: 'staff 20', label: 'staff rate', type: 'percent', value: 20 } });
+    ok('admin issues a discount, code normalised', r.status === 201 && r.body.code === 'STAFF20', JSON.stringify(r.body));
+    const d20 = r.body.id;
+    r = await api('POST', '/api/discounts', { headers: H(adminT), body: { code: 'STAFF20', type: 'percent', value: 5 } });
+    ok('duplicate codes are refused', r.status === 409, `got ${r.status}`);
+    r = await api('POST', '/api/discounts', { headers: H(adminT), body: { code: 'BAD', type: 'percent', value: 150 } });
+    ok('a percentage over 100 is refused', r.status === 400, `got ${r.status}`);
+    r = await api('POST', '/api/discounts', { headers: H(adminT), body: { code: 'LONGSTAY', type: 'fixed', value: 15, maxUses: 1 } });
+    ok('a fixed-amount code with a use limit is accepted', r.status === 201 && r.body.maxUses === 1);
+    const dFixed = r.body.id;
+    r = await api('POST', '/api/discounts', { headers: H(yawAuth.body.token), body: { code: 'NOPE', type: 'percent', value: 5 } });
+    ok('a cashier cannot issue discounts', r.status === 403, `got ${r.status}`);
+
+    // Apply at acceptance.
+    let g = await api('POST', '/api/orders', { body: { guestName: 'Disc One', guestEmail: 'd1@example.com', items: 25 } });
+    r = await api('POST', `/api/orders/${g.body.id}/accept`, { headers: H(adminT), body: { room: '7', price: 100, priceReason: 'flat', discountCode: 'STAFF20' } });
+    ok('a percentage discount comes off the total', r.status === 200 && r.body.price === 80 && r.body.listPrice === 100, JSON.stringify({ p: r.body.price, l: r.body.listPrice }));
+    ok('the order records which code was used and by whom', r.body.discount.code === 'STAFF20' && r.body.discount.amount === 20 && r.body.discount.by.name === 'Ama', JSON.stringify(r.body.discount));
+    const discOrder = r.body.id;
+
+    // A cashier without the permission may not discount.
+    g = await api('POST', '/api/orders', { body: { guestName: 'Disc Two', guestEmail: 'd2@example.com', items: 25 } });
+    r = await api('POST', `/api/orders/${g.body.id}/accept`, { headers: H(yawAuth.body.token), body: { room: '8', discountCode: 'STAFF20' } });
+    ok('a cashier without the permission cannot apply one', r.status === 403, `got ${r.status}`);
+
+    // Grant it, then the same cashier can.
+    await api('PATCH', `/api/cashiers/${yawId}`, { headers: H(adminT), body: { permissions: { acceptOrders: true, advanceStatus: true, takePayment: true, discount: true } } });
+    const yaw2 = await api('POST', '/api/auth/pin', { body: { pin: '4321' } });
+    r = await api('POST', `/api/orders/${g.body.id}/accept`, { headers: H(yaw2.body.token), body: { room: '8', price: 100, priceReason: 'flat', discountCode: 'LONGSTAY' } });
+    ok('a cashier granted the permission can apply one', r.status === 200 && r.body.price === 85, JSON.stringify({ s: r.status, p: r.body.price }));
+
+    r = await api('GET', '/api/discounts', { headers: H(adminT) });
+    ok('uses are counted per code', r.body.find((d) => d.code === 'STAFF20').uses === 1 && r.body.find((d) => d.code === 'LONGSTAY').uses === 1, JSON.stringify(r.body.map((d) => [d.code, d.uses])));
+    ok('a code at its limit reads as spent', r.body.find((d) => d.code === 'LONGSTAY').spent === true);
+
+    g = await api('POST', '/api/orders', { body: { guestName: 'Disc Three', guestEmail: 'd3@example.com', items: 25 } });
+    r = await api('POST', `/api/orders/${g.body.id}/accept`, { headers: H(adminT), body: { room: '9', discountCode: 'LONGSTAY' } });
+    ok('a spent code is refused', r.status === 409, `got ${r.status}`);
+
+    // Removing a discount restores the price and hands the use back.
+    r = await api('PATCH', `/api/orders/${discOrder}`, { headers: H(adminT), body: { removeDiscount: true } });
+    ok('removing a discount puts the price back', r.status === 200 && r.body.price === 100 && !r.body.discount, JSON.stringify({ p: r.body.price, d: r.body.discount }));
+    r = await api('GET', '/api/discounts', { headers: H(adminT) });
+    ok('the use is handed back to the code', r.body.find((d) => d.code === 'STAFF20').uses === 0);
+
+    // A discount must not drop the total below what has already been paid.
+    r = await api('PATCH', `/api/orders/${discOrder}`, { headers: H(adminT), body: { paymentStatus: 'paid', paymentMethod: 'cash' } });
+    ok('the full price is payable once the discount is gone', r.body.amountPaid === 100);
+    r = await api('PATCH', `/api/orders/${discOrder}`, { headers: H(adminT), body: { discountCode: 'STAFF20' } });
+    ok('a discount below the amount already paid is refused', r.status === 409, `got ${r.status} ${r.body.error || ''}`);
+
+    // Reporting.
+    const dr = await revenueReport({});
+    ok('the report totals what discounting cost', dr.totals.discounts === 15 && dr.totals.discountedCount === 1, JSON.stringify({ d: dr.totals.discounts, c: dr.totals.discountedCount }));
+    ok('the CSV reports discounts', /Discounts given/.test(reportToCsv(dr)));
+
+    await api('DELETE', `/api/discounts/${d20}`, { headers: H(adminT) });
+    await api('DELETE', `/api/discounts/${dFixed}`, { headers: H(adminT) });
+    r = await api('GET', '/api/discounts', { headers: H(adminT) });
+    ok('discounts can be removed', r.body.length === 0, JSON.stringify(r.body));
+  }
 
   section('Admin: delete orders in a timeframe');
   const before = (await api('GET', '/api/orders', { headers: H(adminT) })).body.length;

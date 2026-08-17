@@ -188,6 +188,23 @@ export async function handleRequest({ method, path, query = {}, body = {}, heade
       return json(200, await L.deleteOrdersInRange(body));
     }
 
+    // ---------- admin: repair payment records written by older builds ----------
+    // Defaults to a dry run; pass { apply: true } to write the changes.
+    if (parts[0] === 'orders' && parts[1] === 'backfill-payments' && m === 'POST') {
+      const user = await requireAdmin(headers);
+      return json(200, await L.backfillPaymentRecords({ apply: body.apply === true }, user));
+    }
+
+    // ---------- discounts ----------
+    if (parts[0] === 'discounts') {
+      const id = parts[1];
+      // Anyone allowed to apply a discount needs to see the codes on offer.
+      if (m === 'GET' && !id) { await requirePerm(headers, 'discount'); return json(200, await L.listDiscounts()); }
+      if (m === 'POST' && !id) { const u = await requirePerm(headers, 'manageSettings'); return json(201, await L.createDiscount(body, u)); }
+      if (m === 'PATCH' && id) { const u = await requirePerm(headers, 'manageSettings'); return json(200, await L.updateDiscount(id, body, u)); }
+      if (m === 'DELETE' && id) { await requirePerm(headers, 'manageSettings'); return json(200, await L.deleteDiscount(id)); }
+    }
+
     // ---------- admin: full data backup / restore ----------
     if (parts[0] === 'backup') {
       if (m === 'GET' && !parts[1]) { await requireAdmin(headers); return json(200, await L.exportAll()); }

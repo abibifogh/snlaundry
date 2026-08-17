@@ -8,6 +8,7 @@ const state = {
   user: null,
   perms: {},
   catalogue: {},
+  discounts: [], // codes this user may apply, loaded on sign-in
   settings: null,
   tab: 'orders',
   pin: '',
@@ -280,6 +281,7 @@ async function boot() {
       const me = await api('GET', '/me');
       state.user = me.user; state.perms = me.user.permissions || {}; state.catalogue = me.permissionCatalogue;
       state.settings = await api('GET', '/settings');
+      await loadDiscounts();
       return enterApp();
     } catch { state.token = null; localStorage.removeItem(TOKEN_KEY); }
   }
@@ -385,6 +387,7 @@ async function afterAuth(auth) {
   const me = await api('GET', '/me');
   state.user = me.user; state.perms = me.user.permissions || {}; state.catalogue = me.permissionCatalogue;
   state.settings = await api('GET', '/settings');
+  await loadDiscounts();
   enterApp();
 }
 function lock() {
@@ -673,7 +676,7 @@ function orderCard(o) {
   return `<div class="ocard" onclick="openOrder('${o.id}')">
     <div class="top"><span class="num">#${o.number}</span><span class="badge b-${o.status}">${STATUS_LABEL[o.status]}</span></div>
     <div>${esc(o.guestName)} ${o.room ? `· Room ${esc(o.room)}` : ''} ${unread ? `<span class="tab-badge">${unread}✉</span>` : ''}</div>
-    <div class="meta">${o.items} items · ${o.loads} load(s) · ${money(o.price)} · ${o.status === 'new' ? paymentPref(o) : paymentLabel(o)}</div>
+    <div class="meta">${o.items} items · ${o.loads} load(s) · ${money(o.price)}${o.discount ? ` <span class="pill">${esc(o.discount.code)}</span>` : ''} · ${o.status === 'new' ? paymentPref(o) : paymentLabel(o)}</div>
     <div class="meta">${o.status === 'new' ? 'Placed ' + ago(o.createdAt) : 'Ready by ' + fmt(o.pickupAt)}</div>
     ${snoozed ? '<div class="meta" style="color:var(--muted)">🔕 snoozed · ' + esc(o.delayReason || 'delay noted') + '</div>' : ''}
     ${flagAccepted ? '<div class="meta" style="color:var(--danger);font-weight:600">⏰ waiting ' + ago(o.acceptedAt) + ' — follow up at laundry</div>' : ''}
@@ -723,7 +726,7 @@ window.openOrder = async (id) => {
       <tr><td class="muted">Email</td><td>${esc(o.guestEmail)}</td></tr>
       <tr><td class="muted">Room name</td><td>${esc(o.room || '—')}</td></tr>
       <tr><td class="muted">Items / loads</td><td>${o.items} / ${o.loads}</td></tr>
-      <tr><td class="muted">Total</td><td>${money(o.price)}</td></tr>
+      <tr><td class="muted">Total</td><td>${money(o.price)}${o.discount ? ` <span class="muted">(${esc(o.discount.code)} −${money(o.discount.amount)} off ${money(o.listPrice)})</span>` : ''}</td></tr>
       <tr><td class="muted">Payment</td><td>${o.paymentStatus === 'paid' ? 'Paid ✓ (' + (o.paymentMethod || '') + ')' + (o.paidBy ? ' · by ' + esc(o.paidBy.name) : '') : o.paymentStatus === 'partial' ? `Partial · ${money(o.amountPaid)} of ${money(o.price)} · ${money(o.price - o.amountPaid)} due` : '⚠ Unpaid · guest chose ' + paymentPref(o)}</td></tr>
       <tr><td class="muted">Ready by</td><td>${fmt(o.pickupAt)}</td></tr>
       ${o.note ? `<tr><td class="muted">Note</td><td>${esc(o.note)}</td></tr>` : ''}
@@ -771,6 +774,7 @@ window.openAccept = async (id) => {
     <p class="muted" style="font-size:12px;margin:6px 0 0">${o.loads} load(s) × ${money(state.settings?.pricePerLoad)} = ${money(est)} (editable).</p>
     <label>Reason for price change <span class="muted">(required only if you change the amount)</span></label>
     <input id="acPriceReason" placeholder="e.g. express service / extra items">
+    ${discountField('ac', null)}
     <label>Payment <span class="muted">— guest chose ${paymentPref(o)}</span></label>
     <select id="acPayStatus" onchange="document.getElementById('acMethodRow').style.display=this.value==='paid'?'block':'none'">
       <option value="unpaid" ${o.paymentTiming !== 'now' ? 'selected' : ''}>Not paid yet</option>
@@ -791,6 +795,7 @@ window.doAccept = async (id) => {
     await api('POST', `/orders/${id}/accept`, {
       room, pickupAt: pickup, price: $('#acPrice').value,
       priceReason: $('#acPriceReason').value.trim(),
+      discountCode: $('#acDiscount') ? $('#acDiscount').value : '',
       paymentStatus: $('#acPayStatus').value, paymentMethod: $('#acMethod') ? $('#acMethod').value : 'cash',
     });
     closeModal(); renderTab();
@@ -818,6 +823,7 @@ window.openModify = async (id) => {
       <label>Method</label>
       <select id="mdMethod"><option value="cash" ${o.paymentMethod === 'cash' ? 'selected' : ''}>Cash</option><option value="card" ${o.paymentMethod === 'card' ? 'selected' : ''}>Card</option></select>
     </div>
+    ${discountField('md', o.discount)}
     ${(Number(o.amountPaid) || 0) > 0 ? `<label>Payment date</label><input id="mdPaidAt" type="datetime-local" value="${o.paidAt ? toLocalInput(o.paidAt) : ''}"><p class="muted" style="font-size:12px;margin:6px 0 0">Corrects the date this order's payment was recorded.</p>` : ''}
     <button class="btn-full" style="margin-top:16px" onclick="doModify('${o.id}')">Save changes</button>
   `);
@@ -830,6 +836,7 @@ window.doModify = async (id) => {
       paidAt: $('#mdPaidAt') && $('#mdPaidAt').value ? new Date($('#mdPaidAt').value).toISOString() : undefined,
       pickupAt: $('#mdPickup').value ? new Date($('#mdPickup').value).toISOString() : undefined,
       paymentStatus: $('#mdPayStatus').value, paymentMethod: $('#mdMethod').value,
+      ...discountPatch('md'),
     });
     closeModal(); renderTab();
   } catch (e) { notice($('#modMsg'), 'err', e.message); }
@@ -960,7 +967,50 @@ function reportQs() {
   if (p.shift) s += `&shift=${encodeURIComponent(p.shift)}`;
   return s;
 }
+// ---------------- DISCOUNTS (shared bits) ----------------
+// The codes a user may apply. Silently empty for anyone without the permission,
+// so the picker simply doesn't appear for them.
+async function loadDiscounts() {
+  if (!can('discount')) { state.discounts = []; return; }
+  try { state.discounts = await api('GET', '/discounts'); } catch { state.discounts = []; }
+}
+function usableDiscounts(currentCode) {
+  return (state.discounts || []).filter(d => d.code === currentCode || (d.active && !d.expired && !d.spent));
+}
+function discountLabel(d) {
+  const off = d.type === 'percent' ? `${d.value}% off` : `${money(d.value)} off`;
+  return `${d.code} — ${off}${d.label ? ' · ' + d.label : ''}`;
+}
+// The picker shown in the accept and modify modals. Renders nothing at all when
+// the user can't discount or there is no usable code to pick.
+function discountField(prefix, current) {
+  const list = usableDiscounts(current && current.code);
+  if (!can('discount') || !list.length) return '';
+  const opts = list.map(d => `<option value="${esc(d.code)}" ${current && current.code === d.code ? 'selected' : ''}>${esc(discountLabel(d))}</option>`).join('');
+  return `<label>Discount</label>
+    <select id="${prefix}Discount"><option value="">No discount</option>${opts}</select>
+    ${current ? `<p class="muted" style="font-size:12px;margin:6px 0 0">Currently ${esc(current.code)} — ${money(current.amount)} off. Choose "No discount" to remove it.</p>` : ''}`;
+}
+// Turns the picker into the patch the API expects: a code to apply, or an
+// explicit removal when an order that had one is set back to none.
+function discountPatch(prefix) {
+  const el = document.getElementById(`${prefix}Discount`);
+  if (!el) return {};
+  const code = el.value;
+  return code ? { discountCode: code } : { removeDiscount: true };
+}
+
 window.toggleBd = (id) => { const el = document.getElementById(id); if (el) el.classList.toggle('hidden'); };
+// The orders whose payments make up a shift's cash and card figures, so a total
+// can be traced back to the individual payments behind it.
+function methodBreakdown(b) {
+  const line = (label, total, method) => {
+    const list = (b.payments || []).filter(p => p.method === method);
+    const items = list.map(p => `<span style="display:inline-block;margin:2px 10px 2px 0;white-space:nowrap">#${p.number} <b>${money(p.amount)}</b> <span class="muted">${String(p.at).slice(11, 16)}${p.by ? ' · ' + esc(p.by) : ''}</span></span>`).join('');
+    return `<div style="margin:4px 0"><span class="muted">↳ ${label}</span> <b>${money(total)}</b>${list.length ? ` <span class="muted">— ${list.length} payment${list.length > 1 ? 's' : ''}</span><div style="margin:2px 0 0 14px;font-size:12px">${items}</div>` : ' <span class="muted">— none</span>'}</div>`;
+  };
+  return line('Cash', b.cash, 'cash') + line('Card', b.card, 'card');
+}
 window.loadReport = async () => {
   const p = reportParams();
   const r = await api('GET', '/report?' + reportQs());
@@ -978,6 +1028,7 @@ window.loadReport = async () => {
       <div class="stat"><div class="k">Items</div><div class="v">${t.items}</div></div>
       <div class="stat"><div class="k">Avg order</div><div class="v">${money(t.avgOrderValue)}</div></div>
       <div class="stat"><div class="k">Cash / Card</div><div class="v" style="font-size:18px">${money(r.byMethod.cash)} / ${money(r.byMethod.card)}</div></div>
+      ${t.discounts ? `<div class="stat"><div class="k">Discounts</div><div class="v">-${money(t.discounts)}</div><div class="muted" style="font-size:11px">${t.discountedCount} order(s)</div></div>` : ''}
     </div>
     <div class="card"><h3 style="margin-top:0">Revenue by day</h3>
       ${r.byDay.length ? r.byDay.map(d => `<div style="display:flex;align-items:center;gap:10px;margin:6px 0">
@@ -987,10 +1038,10 @@ window.loadReport = async () => {
       </div>`).join('') : '<p class="muted">No revenue in this range.</p>'}
     </div>
     <div class="card"><h3 style="margin-top:0">By shift</h3>
-      <p class="hint" style="margin-top:-4px">Revenue &amp; loads count orders <b>accepted</b> in each shift. Collected counts money <b>received</b> during the shift — tap it for the cash / card split.</p>
+      <p class="hint" style="margin-top:-4px">Revenue &amp; loads count orders <b>accepted</b> in each shift. Collected counts money <b>received</b> during the shift — tap it to see the cash / card split and the orders behind each.</p>
       <div class="table-wrap"><table class="data"><thead><tr><th>Shift</th><th>Orders</th><th>Loads</th><th>Revenue</th><th>Collected</th></tr></thead>
       <tbody>${['AM', 'PM', 'Night'].map(s => { const b = r.byShift[s]; return `<tr><td><b>${s}</b> <span class="muted">${SHIFT_TIME[s]}</span></td><td>${b.orders}</td><td>${b.loads}</td><td>${money(b.revenue)}</td><td><button onclick="toggleBd('bd-${s}')" style="background:none;border:0;color:var(--accent);padding:0;cursor:pointer;font:inherit;text-decoration:underline">${money(b.collected)} ▾</button></td></tr>
-      <tr id="bd-${s}" class="hidden"><td colspan="5" class="muted" style="padding-left:20px">↳ Cash ${money(b.cash)} · Card ${money(b.card)}</td></tr>`; }).join('')}</tbody></table></div>
+      <tr id="bd-${s}" class="hidden"><td colspan="5" style="padding-left:20px">${methodBreakdown(b)}</td></tr>`; }).join('')}</tbody></table></div>
     </div>
     <div class="card"><h3 style="margin-top:0">By staff</h3>
       <p class="hint" style="margin-top:-4px">Payments / Collected / Cash / Card count the money each person <b>took</b> in this range, by payment time — regardless of when the order was accepted.</p>
@@ -998,8 +1049,8 @@ window.loadReport = async () => {
       <tbody>${(r.byStaff || []).map(s => `<tr><td>${esc(s.name)}</td><td>${s.accepted}</td><td>${s.cleaned}</td><td>${s.ready}</td><td>${s.completed}</td><td>${s.payments}</td><td>${money(s.collected)}</td><td>${money(s.cash)}</td><td>${money(s.card)}</td></tr>`).join('') || '<tr><td colspan="9" class="muted">No activity</td></tr>'}</tbody></table></div>
     </div>
     <div class="card"><h3 style="margin-top:0">Orders in range (${r.orders.length})</h3>
-      <div class="table-wrap"><table class="data"><thead><tr><th>#</th><th>Date</th><th>Shift</th><th>Guest</th><th>Room</th><th>Loads</th><th>Total</th><th>Payment</th><th>Accepted</th><th>Ready</th><th>Paid by</th><th>Status</th></tr></thead>
-      <tbody>${r.orders.map(o => `<tr><td>#${o.number}</td><td>${fmt(o.acceptedAt || o.createdAt)}</td><td>${o.shift}</td><td>${esc(o.guestName)}</td><td>${esc(o.room || '—')}</td><td>${o.loads}</td><td>${money(o.price)}</td><td>${o.paymentStatus === 'paid' ? 'Paid (' + (o.paymentMethod || '') + ')' : 'Unpaid'}</td><td>${esc(nm(o.acceptedBy))}</td><td>${esc(nm(o.readyBy))}</td><td>${esc(nm(o.paidBy))}</td><td><span class="badge b-${o.status}">${STATUS_LABEL[o.status]}</span></td></tr>`).join('') || '<tr><td colspan="12" class="muted">None</td></tr>'}</tbody></table></div>
+      <div class="table-wrap"><table class="data"><thead><tr><th>#</th><th>Date</th><th>Shift</th><th>Guest</th><th>Room</th><th>Loads</th><th>Total</th><th>Discount</th><th>Payment</th><th>Accepted</th><th>Ready</th><th>Paid by</th><th>Status</th></tr></thead>
+      <tbody>${r.orders.map(o => `<tr><td>#${o.number}</td><td>${fmt(o.acceptedAt || o.createdAt)}</td><td>${o.shift}</td><td>${esc(o.guestName)}</td><td>${esc(o.room || '—')}</td><td>${o.loads}</td><td>${money(o.price)}</td><td>${o.discount ? esc(o.discount.code) + ' −' + money(o.discount.amount) : '—'}</td><td>${o.paymentStatus === 'paid' ? 'Paid (' + (o.paymentMethod || '') + ')' : 'Unpaid'}</td><td>${esc(nm(o.acceptedBy))}</td><td>${esc(nm(o.readyBy))}</td><td>${esc(nm(o.paidBy))}</td><td><span class="badge b-${o.status}">${STATUS_LABEL[o.status]}</span></td></tr>`).join('') || '<tr><td colspan="13" class="muted">None</td></tr>'}</tbody></table></div>
     </div>
     <div id="shiftHistory"></div>`;
   loadShiftHistory(p.from, p.to);
@@ -1045,15 +1096,18 @@ window.exportPdf = () => {
       <div>Outstanding<b>${money(t.outstanding)}</b></div><div>Orders<b>${t.orders}</b></div>
       <div>Loads<b>${t.loads}</b></div><div>Avg order<b>${money(t.avgOrderValue)}</b></div>
       <div>Cash<b>${money(r.byMethod.cash)}</b></div><div>Card<b>${money(r.byMethod.card)}</b></div>
+      ${t.discounts ? `<div>Discounts<b>-${money(t.discounts)}</b></div>` : ''}
     </div>
     <h3>Daily</h3><table><tr><th>Date</th><th>Orders</th><th>Loads</th><th>Revenue</th></tr>
     ${r.byDay.map(d => `<tr><td>${d.date}</td><td>${d.orders}</td><td>${d.loads}</td><td>${money(d.revenue)}</td></tr>`).join('')}</table>
     <h3>By shift</h3><table><tr><th>Shift</th><th>Orders</th><th>Loads</th><th>Revenue</th><th>Collected</th><th>Cash</th><th>Card</th></tr>
     ${['AM', 'PM', 'Night'].map(s => { const b = r.byShift[s]; return `<tr><td>${s} (${SHIFT_TIME[s]})</td><td>${b.orders}</td><td>${b.loads}</td><td>${money(b.revenue)}</td><td>${money(b.collected)}</td><td>${money(b.cash)}</td><td>${money(b.card)}</td></tr>`; }).join('')}</table>
+    <h3>Payments behind each shift total</h3><table><tr><th>Shift</th><th>Time</th><th>Order</th><th>Method</th><th>Amount</th><th>Taken by</th></tr>
+    ${['AM', 'PM', 'Night'].flatMap(s => (r.byShift[s].payments || []).map(p => `<tr><td>${s}</td><td>${String(p.at).slice(11, 16)}</td><td>#${p.number}</td><td>${p.method}</td><td>${money(p.amount)}</td><td>${esc(p.by || 'Unattributed')}</td></tr>`)).join('') || '<tr><td colspan="6">No payments in this range.</td></tr>'}</table>
     <h3>By staff</h3><table><tr><th>Staff</th><th>Accepted</th><th>Cleaned</th><th>Ready</th><th>Picked up</th><th>Payments</th><th>Collected</th><th>Cash</th><th>Card</th></tr>
     ${(r.byStaff || []).map(s => `<tr><td>${esc(s.name)}</td><td>${s.accepted}</td><td>${s.cleaned}</td><td>${s.ready}</td><td>${s.completed}</td><td>${s.payments}</td><td>${money(s.collected)}</td><td>${money(s.cash)}</td><td>${money(s.card)}</td></tr>`).join('')}</table>
-    <h3>Orders</h3><table><tr><th>#</th><th>Shift</th><th>Guest</th><th>Room</th><th>Loads</th><th>Total</th><th>Payment</th><th>Accepted by</th><th>Paid by</th></tr>
-    ${r.orders.map(o => `<tr><td>${o.number}</td><td>${o.shift}</td><td>${esc(o.guestName)}</td><td>${esc(o.room || '')}</td><td>${o.loads}</td><td>${money(o.price)}</td><td>${o.paymentStatus}</td><td>${esc(nm(o.acceptedBy))}</td><td>${esc(nm(o.paidBy))}</td></tr>`).join('')}</table>
+    <h3>Orders</h3><table><tr><th>#</th><th>Shift</th><th>Guest</th><th>Room</th><th>Loads</th><th>Total</th><th>Discount</th><th>Payment</th><th>Accepted by</th><th>Paid by</th></tr>
+    ${r.orders.map(o => `<tr><td>${o.number}</td><td>${o.shift}</td><td>${esc(o.guestName)}</td><td>${esc(o.room || '')}</td><td>${o.loads}</td><td>${money(o.price)}</td><td>${o.discount ? esc(o.discount.code) + ' -' + money(o.discount.amount) : ''}</td><td>${o.paymentStatus}</td><td>${esc(nm(o.acceptedBy))}</td><td>${esc(nm(o.paidBy))}</td></tr>`).join('')}</table>
     <p style="color:#888;font-size:12px;margin-top:20px">Generated ${new Date().toLocaleString()}</p>
     <script>window.onload=()=>window.print()<\/script></body></html>`);
   w.document.close();
@@ -1253,6 +1307,24 @@ async function renderSettings(view) {
     </div>
 
     <div class="card">
+      <h3 style="margin-top:0">Discounts</h3>
+      <p class="hint">Codes reception can apply to an order. A code can be limited by an expiry date or a maximum number of uses, or simply switched off. Only staff with the <b>${esc(state.catalogue.discount || 'discount')}</b> permission can apply one.</p>
+      <div id="discMsg"></div>
+      <div id="discList"></div>
+      <button class="secondary" style="margin-top:10px" onclick="openDiscount()">+ Issue a discount</button>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0">Repair payment records</h3>
+      <p class="hint">Earlier versions of this app saved a payment as a status only — no amount, no cash/card ledger — so those payments are missing from reports. This rebuilds them from each order's own price, payment time and cashier. Preview first; nothing changes until you apply.</p>
+      <div id="bfMsg"></div>
+      <div id="bfResult"></div>
+      <div class="toolbar" style="margin-top:8px">
+        <button class="secondary" onclick="previewBackfill()">Preview changes</button>
+      </div>
+    </div>
+
+    <div class="card">
       <h3 style="margin-top:0">Order numbering</h3>
       <p class="hint">The next order will be <b>#<span id="seqCurrent">${seq.next}</span></b>. Change the next number below (e.g. to restart the sequence).</p>
       <div id="seqMsg"></div>
@@ -1290,7 +1362,105 @@ async function renderSettings(view) {
     </div>`;
   drawQr(orderUrl);
   loadDevices();
+  renderDiscountList();
 }
+
+// ---------------- DISCOUNTS (admin management) ----------------
+async function renderDiscountList() {
+  const box = document.getElementById('discList');
+  if (!box) return;
+  try { state.discounts = await api('GET', '/discounts'); } catch { box.textContent = 'Could not load discounts.'; return; }
+  if (!state.discounts.length) { box.innerHTML = '<p class="muted" style="font-size:13px;margin:0">No discounts yet.</p>'; return; }
+  box.innerHTML = state.discounts.map(d => {
+    const off = d.type === 'percent' ? `${d.value}%` : money(d.value);
+    const limits = [
+      d.expiresAt ? `expires ${d.expiresAt.slice(0, 10)}` : 'no expiry',
+      d.maxUses != null ? `used ${d.uses}/${d.maxUses}` : `used ${d.uses}×`,
+    ].join(' · ');
+    const state_ = !d.active ? '<span class="pill">off</span>' : d.expired ? '<span class="pill">expired</span>' : d.spent ? '<span class="pill">used up</span>' : '';
+    return `<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);flex-wrap:wrap">
+      <div style="flex:1 1 200px"><b style="color:var(--ink)">${esc(d.code)}</b> <span class="pill">${off} off</span> ${state_}
+        ${d.label ? `<br><span class="muted" style="font-size:12px">${esc(d.label)}</span>` : ''}
+        <br><span class="muted" style="font-size:12px">${limits}</span></div>
+      <button class="small secondary" onclick='openDiscount(${JSON.stringify(d)})'>Edit</button>
+      <button class="small secondary" onclick="toggleDiscount('${d.id}', ${!d.active})">${d.active ? 'Switch off' : 'Switch on'}</button>
+      <button class="small danger" onclick="delDiscount('${d.id}','${esc(d.code)}')">Remove</button>
+    </div>`;
+  }).join('');
+}
+window.openDiscount = (d) => {
+  d = d || null;
+  openModal(`
+    <button class="ghost small close" onclick="closeModal()">✕</button>
+    <h3>${d ? 'Edit' : 'Issue a'} discount</h3>
+    <div id="dscMsg"></div>
+    <label>Code</label>
+    <input id="dscCode" value="${d ? esc(d.code) : ''}" placeholder="e.g. STAFF20" style="text-transform:uppercase">
+    <label>Description <span class="muted">(optional)</span></label>
+    <input id="dscLabel" value="${d ? esc(d.label || '') : ''}" placeholder="e.g. staff rate">
+    <div class="row">
+      <div><label>Type</label>
+        <select id="dscType">
+          <option value="percent" ${!d || d.type === 'percent' ? 'selected' : ''}>Percentage off</option>
+          <option value="fixed" ${d && d.type === 'fixed' ? 'selected' : ''}>Fixed amount off</option>
+        </select></div>
+      <div><label>Value</label><input id="dscValue" type="number" step="0.01" min="0" value="${d ? d.value : ''}" placeholder="e.g. 20"></div>
+    </div>
+    <div class="row">
+      <div><label>Expires <span class="muted">(optional)</span></label><input id="dscExpires" type="date" value="${d && d.expiresAt ? d.expiresAt.slice(0, 10) : ''}"></div>
+      <div><label>Max uses <span class="muted">(optional)</span></label><input id="dscMax" type="number" min="1" value="${d && d.maxUses != null ? d.maxUses : ''}" placeholder="unlimited"></div>
+    </div>
+    <p class="muted" style="font-size:12px;margin:8px 0 0">A percentage applies to the order total; a fixed amount is capped at the total, never below zero.</p>
+    <button class="btn-full" style="margin-top:16px" onclick="saveDiscount(${d ? `'${d.id}'` : 'null'})">Save</button>
+  `);
+};
+window.saveDiscount = async (id) => {
+  const body = {
+    code: $('#dscCode').value.trim(),
+    label: $('#dscLabel').value.trim(),
+    type: $('#dscType').value,
+    value: $('#dscValue').value,
+    expiresAt: $('#dscExpires').value || '',
+    maxUses: $('#dscMax').value || '',
+  };
+  try {
+    if (id) await api('PATCH', `/discounts/${id}`, body);
+    else await api('POST', '/discounts', body);
+    closeModal(); renderDiscountList();
+  } catch (e) { notice($('#dscMsg'), 'err', e.message); }
+};
+window.toggleDiscount = async (id, active) => {
+  try { await api('PATCH', `/discounts/${id}`, { active }); renderDiscountList(); } catch (e) { alert(e.message); }
+};
+window.delDiscount = async (id, code) => {
+  if (!confirm(`Remove the discount ${code}? Orders that already used it keep their discount.`)) return;
+  try { await api('DELETE', `/discounts/${id}`); renderDiscountList(); } catch (e) { alert(e.message); }
+};
+
+// ---------------- REPAIR PAYMENT RECORDS ----------------
+window.previewBackfill = async () => {
+  const box = $('#bfResult');
+  box.innerHTML = '<p class="muted">Checking…</p>';
+  try {
+    const r = await api('POST', '/orders/backfill-payments', { apply: false });
+    if (!r.orders) {
+      box.innerHTML = `<p class="muted">All ${r.scanned} order(s) already carry a full payment record. Nothing to repair.</p>`;
+      return;
+    }
+    const rows = r.repairs.map(x => `<tr><td>#${x.number}</td><td>${esc(x.guestName || '')}</td><td>${money(x.amount)}</td><td>${x.method}</td><td>${String(x.at).slice(0, 10)}</td><td>${esc(x.by || '—')}</td></tr>`).join('');
+    box.innerHTML = `<p><b>${r.orders}</b> order(s) are missing a payment record, totalling <b>${money(r.amount)}</b>.</p>
+      <div class="table-wrap"><table class="data"><thead><tr><th>#</th><th>Guest</th><th>Amount</th><th>Method</th><th>Paid</th><th>Taken by</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <button class="danger" style="margin-top:12px" onclick="applyBackfill(${r.orders})">Apply to ${r.orders} order(s)</button>`;
+  } catch (e) { notice($('#bfMsg'), 'err', e.message); box.innerHTML = ''; }
+};
+window.applyBackfill = async (n) => {
+  if (!confirm(`Rebuild the payment record on ${n} order(s)? Each gets a payment entry matching its price, payment time and cashier. Take a backup first if you want a way back.`)) return;
+  try {
+    const r = await api('POST', '/orders/backfill-payments', { apply: true });
+    notice($('#bfMsg'), 'ok', `Repaired ${r.orders} order(s), ${money(r.amount)} now recorded. Re-run your report to see it.`);
+    $('#bfResult').innerHTML = '';
+  } catch (e) { notice($('#bfMsg'), 'err', e.message); }
+};
 async function loadDevices() {
   const box = document.getElementById('devList');
   if (!box) return;
