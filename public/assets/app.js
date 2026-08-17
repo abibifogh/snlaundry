@@ -949,7 +949,8 @@ window.onDateEdited = () => { const r = $('#rpRange'); if (r) r.value = 'custom'
 function reportParams() {
   return {
     from: new Date($('#rpFrom').value + 'T00:00:00').toISOString(),
-    to: new Date($('#rpTo').value + 'T23:59:59').toISOString(),
+    // .999 so a payment taken in the last second of the day still lands in range.
+    to: new Date($('#rpTo').value + 'T23:59:59.999').toISOString(),
     shift: $('#rpShift') ? $('#rpShift').value : '',
   };
 }
