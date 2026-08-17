@@ -477,6 +477,15 @@ export async function modifyOrder(id, patch, actor) {
         changes.push('payment reset → unpaid');
       }
     }
+    // Admin can correct the recorded payment date.
+    if (patch.paidAt != null && patch.paidAt !== '' && (Number(o.amountPaid) || 0) > 0) {
+      const iso = new Date(patch.paidAt).toISOString();
+      if (iso !== o.paidAt) {
+        o.paidAt = iso;
+        if (o.payments && o.payments.length) o.payments[o.payments.length - 1].at = iso;
+        changes.push(`payment date → ${iso.slice(0, 10)}`);
+      }
+    }
     if (changes.length) addLog(o, actor, 'modified', changes.join(' · '));
     return o;
   });
@@ -637,8 +646,9 @@ export async function revenueReport({ from, to, shift } = {}) {
     const s = byShift[shiftOf(o.acceptedAt || o.createdAt)];
     s.orders += 1; s.revenue += Number(o.price) || 0; s.loads += o.loads;
     s.collected += Number(o.amountPaid) || 0;
+    for (const p of (o.payments || [])) { if (p.method === 'card') s.card += Number(p.amount) || 0; else s.cash += Number(p.amount) || 0; }
   }
-  Object.values(byShift).forEach((s) => { s.revenue = round2(s.revenue); s.collected = round2(s.collected); });
+  Object.values(byShift).forEach((s) => { s.revenue = round2(s.revenue); s.collected = round2(s.collected); s.cash = round2(s.cash); s.card = round2(s.card); });
 
   // Staff activity — who did what, and cash collected by whom.
   const staff = {};
@@ -682,7 +692,7 @@ export async function revenueReport({ from, to, shift } = {}) {
   };
 }
 
-function shiftBucket() { return { orders: 0, revenue: 0, collected: 0, loads: 0 }; }
+function shiftBucket() { return { orders: 0, revenue: 0, collected: 0, cash: 0, card: 0, loads: 0 }; }
 
 export function reportToCsv(report) {
   const cur = report.currency?.code || '';

@@ -817,6 +817,7 @@ window.openModify = async (id) => {
       <label>Method</label>
       <select id="mdMethod"><option value="cash" ${o.paymentMethod === 'cash' ? 'selected' : ''}>Cash</option><option value="card" ${o.paymentMethod === 'card' ? 'selected' : ''}>Card</option></select>
     </div>
+    ${(Number(o.amountPaid) || 0) > 0 ? `<label>Payment date</label><input id="mdPaidAt" type="datetime-local" value="${o.paidAt ? toLocalInput(o.paidAt) : ''}"><p class="muted" style="font-size:12px;margin:6px 0 0">Corrects the date this order's payment was recorded.</p>` : ''}
     <button class="btn-full" style="margin-top:16px" onclick="doModify('${o.id}')">Save changes</button>
   `);
 };
@@ -825,6 +826,7 @@ window.doModify = async (id) => {
     await api('PATCH', `/orders/${id}`, {
       room: $('#mdRoom').value.trim(), items: $('#mdItems').value, price: $('#mdPrice').value,
       priceReason: $('#mdPriceReason').value.trim(),
+      paidAt: $('#mdPaidAt') && $('#mdPaidAt').value ? new Date($('#mdPaidAt').value).toISOString() : undefined,
       pickupAt: $('#mdPickup').value ? new Date($('#mdPickup').value).toISOString() : undefined,
       paymentStatus: $('#mdPayStatus').value, paymentMethod: $('#mdMethod').value,
     });
@@ -932,6 +934,7 @@ function reportQs() {
   if (p.shift) s += `&shift=${encodeURIComponent(p.shift)}`;
   return s;
 }
+window.toggleBd = (id) => { const el = document.getElementById(id); if (el) el.classList.toggle('hidden'); };
 window.loadReport = async () => {
   const p = reportParams();
   const r = await api('GET', '/report?' + reportQs());
@@ -958,8 +961,10 @@ window.loadReport = async () => {
       </div>`).join('') : '<p class="muted">No revenue in this range.</p>'}
     </div>
     <div class="card"><h3 style="margin-top:0">By shift</h3>
+      <p class="hint" style="margin-top:-4px">Tap a collected amount to see the cash / card split.</p>
       <div class="table-wrap"><table class="data"><thead><tr><th>Shift</th><th>Orders</th><th>Loads</th><th>Revenue</th><th>Collected</th></tr></thead>
-      <tbody>${['AM', 'PM', 'Night'].map(s => { const b = r.byShift[s]; return `<tr><td><b>${s}</b> <span class="muted">${SHIFT_TIME[s]}</span></td><td>${b.orders}</td><td>${b.loads}</td><td>${money(b.revenue)}</td><td>${money(b.collected)}</td></tr>`; }).join('')}</tbody></table></div>
+      <tbody>${['AM', 'PM', 'Night'].map(s => { const b = r.byShift[s]; return `<tr><td><b>${s}</b> <span class="muted">${SHIFT_TIME[s]}</span></td><td>${b.orders}</td><td>${b.loads}</td><td>${money(b.revenue)}</td><td><button onclick="toggleBd('bd-${s}')" style="background:none;border:0;color:var(--accent);padding:0;cursor:pointer;font:inherit;text-decoration:underline">${money(b.collected)} ▾</button></td></tr>
+      <tr id="bd-${s}" class="hidden"><td colspan="5" class="muted" style="padding-left:20px">↳ Cash ${money(b.cash)} · Card ${money(b.card)}</td></tr>`; }).join('')}</tbody></table></div>
     </div>
     <div class="card"><h3 style="margin-top:0">By staff</h3>
       <div class="table-wrap"><table class="data"><thead><tr><th>Staff</th><th>Accepted</th><th>Cleaned</th><th>Ready</th><th>Picked up</th><th>Payments</th><th>Collected</th></tr></thead>
@@ -1016,8 +1021,8 @@ window.exportPdf = () => {
     </div>
     <h3>Daily</h3><table><tr><th>Date</th><th>Orders</th><th>Loads</th><th>Revenue</th></tr>
     ${r.byDay.map(d => `<tr><td>${d.date}</td><td>${d.orders}</td><td>${d.loads}</td><td>${money(d.revenue)}</td></tr>`).join('')}</table>
-    <h3>By shift</h3><table><tr><th>Shift</th><th>Orders</th><th>Loads</th><th>Revenue</th><th>Collected</th></tr>
-    ${['AM', 'PM', 'Night'].map(s => { const b = r.byShift[s]; return `<tr><td>${s} (${SHIFT_TIME[s]})</td><td>${b.orders}</td><td>${b.loads}</td><td>${money(b.revenue)}</td><td>${money(b.collected)}</td></tr>`; }).join('')}</table>
+    <h3>By shift</h3><table><tr><th>Shift</th><th>Orders</th><th>Loads</th><th>Revenue</th><th>Collected</th><th>Cash</th><th>Card</th></tr>
+    ${['AM', 'PM', 'Night'].map(s => { const b = r.byShift[s]; return `<tr><td>${s} (${SHIFT_TIME[s]})</td><td>${b.orders}</td><td>${b.loads}</td><td>${money(b.revenue)}</td><td>${money(b.collected)}</td><td>${money(b.cash)}</td><td>${money(b.card)}</td></tr>`; }).join('')}</table>
     <h3>By staff</h3><table><tr><th>Staff</th><th>Accepted</th><th>Cleaned</th><th>Ready</th><th>Picked up</th><th>Payments</th><th>Collected</th></tr>
     ${(r.byStaff || []).map(s => `<tr><td>${esc(s.name)}</td><td>${s.accepted}</td><td>${s.cleaned}</td><td>${s.ready}</td><td>${s.completed}</td><td>${s.payments}</td><td>${money(s.collected)}</td></tr>`).join('')}</table>
     <h3>Orders</h3><table><tr><th>#</th><th>Shift</th><th>Guest</th><th>Room</th><th>Loads</th><th>Total</th><th>Payment</th><th>Accepted by</th><th>Paid by</th></tr>
