@@ -388,6 +388,50 @@ try {
     await featStore.saveCollection('orders', cleaned);
   }
 
+  section('Collected counts every payment taken in the window');
+  {
+    const keep = await featStore.getCollection('orders');
+    const D1 = '2026-07-10T09:00:00.000Z'; // accepted, well before the window
+    const D2 = '2026-07-15T09:55:00.000Z'; // taken inside the window
+    const LATE = '2026-07-15T23:59:59.500Z'; // last half-second of the day
+    const jess = { id: 'u_jess', name: 'Jessica' };
+    const mary = { id: 'u_mary', name: 'Mary' };
+    const base = { guestName: 'G', room: '1', items: 10, loads: 1, createdAt: D1, acceptedAt: D1, acceptedBy: jess };
+    await featStore.saveCollection('orders', keep.concat([
+      // legacy 60 (never in the ledger) topped up with 40 through the ledger
+      { ...base, id: 'rc1', number: 9001, status: 'completed', price: 100, amountPaid: 100, paymentStatus: 'paid', paymentMethod: 'cash', paidAt: D2, paidBy: mary, payments: [{ id: 'p1', amount: 40, method: 'cash', at: D2, by: mary }] },
+      // paid, then the order was cancelled — there is no refund flow, the money stays
+      { ...base, id: 'rc2', number: 9002, status: 'cancelled', price: 50, amountPaid: 50, paymentStatus: 'paid', paymentMethod: 'card', paidAt: D2, paidBy: mary, payments: [{ id: 'p2', amount: 50, method: 'card', at: D2, by: mary }] },
+      // taken by nobody in particular (imported / pre-login record)
+      { ...base, id: 'rc3', number: 9003, status: 'completed', price: 30, amountPaid: 30, paymentStatus: 'paid', paymentMethod: 'cash', paidAt: D2, paidBy: null, payments: [{ id: 'p3', amount: 30, method: 'cash', at: D2, by: null }] },
+      // deposit taken while the order is still sitting at "new"
+      { ...base, id: 'rc4', number: 9004, status: 'new', price: 0, amountPaid: 20, paymentStatus: 'partial', paymentMethod: 'cash', paidAt: D2, paidBy: mary, payments: [{ id: 'p4', amount: 20, method: 'cash', at: D2, by: mary }] },
+      // right on the closing edge of the range
+      { ...base, id: 'rc5', number: 9005, status: 'completed', price: 25, amountPaid: 25, paymentStatus: 'paid', paymentMethod: 'cash', paidAt: LATE, paidBy: mary, payments: [{ id: 'p5', amount: 25, method: 'cash', at: LATE, by: mary }] },
+    ]));
+
+    const rep = await revenueReport({ from: '2026-07-15T00:00:00.000Z', to: '2026-07-15T23:59:59.999Z' });
+    const staff = (n) => (rep.byStaff || []).find((s) => s.name === n) || {};
+    ok('un-ledgered part of a topped-up order is still counted', staff('Mary').collected >= 100, JSON.stringify(staff('Mary')));
+    ok('payment on a cancelled order still counts', rep.byMethod.card === 50, JSON.stringify(rep.byMethod));
+    ok('payment on an order still at "new" counts', rep.totals.collected === 225, JSON.stringify(rep.totals));
+    ok('payment at 23:59:59.5 falls inside the day', staff('Mary').payments === 5 && staff('Mary').collected === 195, JSON.stringify(staff('Mary')));
+    ok('payment with no recorded taker gets its own row', staff('Unattributed').collected === 30, JSON.stringify(staff('Unattributed')));
+    const r2 = (n) => Math.round(n * 100) / 100;
+    const staffSum = r2((rep.byStaff || []).reduce((a, s) => a + s.collected, 0));
+    const shiftSum = r2(['AM', 'PM', 'Night'].reduce((a, s) => a + rep.byShift[s].collected, 0));
+    ok('staff column adds up to Collected', staffSum === rep.totals.collected, `${staffSum} vs ${rep.totals.collected}`);
+    ok('shift column adds up to Collected', shiftSum === rep.totals.collected, `${shiftSum} vs ${rep.totals.collected}`);
+
+    const bare = await revenueReport({ from: '2026-07-15', to: '2026-07-15' });
+    ok('a bare date range covers the whole day', bare.totals.collected === rep.totals.collected, JSON.stringify(bare.totals));
+
+    const other = await revenueReport({ from: '2026-07-16T00:00:00.000Z', to: '2026-07-16T23:59:59.999Z' });
+    ok('none of it leaks into the next day', other.totals.collected === 0, JSON.stringify(other.totals));
+
+    await featStore.saveCollection('orders', keep);
+  }
+
   section('Ready-for-pickup 12h alert (admin + chosen users)');
   await api('PATCH', `/api/cashiers/${yawId}`, { headers: H(adminT), body: { email: 'yaw@example.com' } });
   await api('PUT', '/api/settings', { headers: H(adminT), body: { readyStuckHours: 12, adminEmail: 'admin@x.com', readyAlertUserIds: [yawId], followUpHours: 1000, quietFrom: 0, quietTo: 0 } });

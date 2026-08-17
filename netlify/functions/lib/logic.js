@@ -605,8 +605,8 @@ export async function importAll(data) {
 export async function revenueReport({ from, to, shift } = {}) {
   const settings = await getSettings();
   const orders = await getCollection(K_ORDERS);
-  const fromD = from ? new Date(from) : new Date(0);
-  const toD = to ? new Date(to) : new Date(8640000000000000);
+  const fromD = rangeStart(from);
+  const toD = rangeEnd(to);
   const shiftFilter = ['AM', 'PM', 'Night'].includes(shift) ? shift : null;
 
   // Revenue is recognised on orders that were accepted (have a price) within range,
@@ -627,18 +627,20 @@ export async function revenueReport({ from, to, shift } = {}) {
   // Collected / cash / card are measured by WHEN a payment was taken and WHO took it,
   // not by when the order was accepted. So a payment Jessica records at 09:55 counts
   // for that moment and for her, even if the order was accepted on an earlier day.
-  // effectivePayments() also covers orders paid before the payment ledger existed
-  // (they only carry amountPaid / paidBy / paidAt).
-  const paidOrders = orders.filter((o) => o.status !== 'cancelled' && o.status !== 'new');
+  // effectivePayments() also covers money that never reached the ledger — orders
+  // paid before the ledger existed, and legacy part-payments topped up since.
+  // Every order is scanned, including cancelled ones and orders still sitting at
+  // "new": there is no refund flow, so money that was handed over stays in the
+  // drawer and still belongs to whoever took it.
   const paymentsInRange = [];
-  for (const o of paidOrders) {
+  for (const o of orders) {
     for (const p of effectivePayments(o)) {
       const atIso = p.at || o.paidAt || o.acceptedAt || o.createdAt;
       const at = new Date(atIso);
-      if (at < fromD || at > toD) continue;
+      if (!(at >= fromD && at <= toD)) continue;
       const pShift = shiftOf(atIso);
       if (shiftFilter && pShift !== shiftFilter) continue;
-      paymentsInRange.push({ amount: Number(p.amount) || 0, method: p.method === 'card' ? 'card' : 'cash', at: atIso, shift: pShift, by: p.by, orderNumber: o.number });
+      paymentsInRange.push({ amount: Number(p.amount) || 0, method: p.method === 'card' ? 'card' : 'cash', at: atIso, shift: pShift, by: p.by || o.paidBy || null, orderNumber: o.number });
     }
   }
   const collected = sum(paymentsInRange.map((p) => p.amount));
@@ -690,8 +692,10 @@ export async function revenueReport({ from, to, shift } = {}) {
     bump(o.readyBy, 'ready');
     bump(o.completedBy, 'completed');
   }
+  // A payment with no recorded taker still has to show up somewhere, otherwise the
+  // staff column totals silently disagree with the Collected figure at the top.
   for (const p of paymentsInRange) {
-    const s = ensure(p.by); if (!s) continue;
+    const s = ensure(p.by) || ensure(UNATTRIBUTED_REF);
     s.payments += 1; s.collected += p.amount;
     if (p.method === 'card') s.card += p.amount; else s.cash += p.amount;
   }
@@ -723,13 +727,40 @@ export async function revenueReport({ from, to, shift } = {}) {
 
 function shiftBucket() { return { orders: 0, revenue: 0, collected: 0, cash: 0, card: 0, loads: 0 }; }
 
-// Payments for reporting. Prefer the ledger; fall back to a single synthetic payment
-// for orders paid before the ledger existed (they only carry amountPaid/paidBy/paidAt).
+const UNATTRIBUTED_REF = { id: '__unattributed__', name: 'Unattributed' };
+
+// Report boundaries. A bare date ("2026-06-15") means the whole of that day, and the
+// end of the range is inclusive down to the millisecond — otherwise a payment taken
+// at 23:59:59.5 falls outside a range that ends at 23:59:59.
+function rangeStart(from) {
+  if (!from) return new Date(0);
+  const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(from) ? `${from}T00:00:00` : from);
+  return isNaN(d) ? new Date(0) : d;
+}
+function rangeEnd(to) {
+  if (!to) return new Date(8640000000000000);
+  const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(to) ? `${to}T23:59:59.999` : to);
+  if (isNaN(d)) return new Date(8640000000000000);
+  // A whole-second boundary was almost certainly meant to include that second.
+  if (d.getMilliseconds() === 0) d.setMilliseconds(999);
+  return d;
+}
+
+// Payments for reporting, as a flat list of "money that changed hands".
+// The ledger is authoritative where it exists, but an order can carry money that
+// never made it into the ledger — orders paid before the ledger existed, or a
+// legacy part-payment topped up after it. Anything paid beyond what the ledger
+// accounts for is emitted as one synthetic entry so no collected money is dropped.
 function effectivePayments(o) {
-  if (o.payments && o.payments.length) return o.payments;
-  const amt = Number(o.amountPaid) || 0;
-  if (amt > 0) return [{ amount: amt, method: o.paymentMethod === 'card' ? 'card' : 'cash', at: o.paidAt || o.acceptedAt || o.createdAt, by: o.paidBy }];
-  return [];
+  const ledger = (o.payments || []).filter((p) => (Number(p.amount) || 0) > 0);
+  const unledgered = round2((Number(o.amountPaid) || 0) - sum(ledger.map((p) => Number(p.amount) || 0)));
+  if (unledgered <= 0.001) return ledger;
+  return ledger.concat([{
+    amount: unledgered,
+    method: o.paymentMethod === 'card' ? 'card' : 'cash',
+    at: o.paidAt || o.acceptedAt || o.createdAt,
+    by: o.paidBy,
+  }]);
 }
 
 export function reportToCsv(report) {
