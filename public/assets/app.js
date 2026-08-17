@@ -636,7 +636,8 @@ async function renderOrders(view, silent) {
     state.pendingMsg = orders.reduce((n, o) => n + (o.messages || []).filter(m => m.sender === 'guest' && !m.readByStaff).length, 0);
   }
 
-  const cols = ['new', 'accepted', 'cleaning', 'ready'];
+  // Laundry staff finish at "mark ready"; hide the Ready-for-pickup column from them.
+  const cols = state.user?.role === 'laundry' ? ['new', 'accepted', 'cleaning'] : ['new', 'accepted', 'cleaning', 'ready'];
   const colTitle = { new: 'New — awaiting acceptance', accepted: 'Accepted', cleaning: 'Cleaning', ready: 'Ready for pickup' };
   const newCount = orders.filter(o => o.status === 'new').length;
 
@@ -902,12 +903,19 @@ function setBadge(tab, n) { const b = $('#badge-' + tab); if (!b) return; if (n 
 async function renderReports(view) {
   const today = new Date(); const p = n => String(n).padStart(2, '0');
   const toStr = d => `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-  const start = new Date(today); start.setDate(today.getDate() - 30);
   view.innerHTML = `<h2>Revenue reporting</h2>
     <div class="card">
       <div class="toolbar">
-        <div><label>From</label><input id="rpFrom" type="date" value="${toStr(start)}"></div>
-        <div><label>To</label><input id="rpTo" type="date" value="${toStr(today)}"></div>
+        <div><label>Quick range</label><select id="rpRange" onchange="applyRange()">
+          <option value="today">Today</option>
+          <option value="7">Last 7 days</option>
+          <option value="15">Last 15 days</option>
+          <option value="30">Last 30 days</option>
+          <option value="month">This month</option>
+          <option value="custom">Custom</option>
+        </select></div>
+        <div><label>From</label><input id="rpFrom" type="date" value="${toStr(today)}" onchange="onDateEdited()"></div>
+        <div><label>To</label><input id="rpTo" type="date" value="${toStr(today)}" onchange="onDateEdited()"></div>
         <div><label>Shift</label><select id="rpShift">
           <option value="">All shifts</option>
           <option value="AM">AM (06–14)</option>
@@ -921,6 +929,23 @@ async function renderReports(view) {
     <div id="reportBody"></div>`;
   loadReport();
 }
+// Quick-range presets set the From/To fields, then re-run the report.
+window.applyRange = () => {
+  const v = $('#rpRange').value;
+  if (v === 'custom') return; // let the user pick dates by hand
+  const p = n => String(n).padStart(2, '0');
+  const toStr = d => `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  const today = new Date();
+  let start = new Date(today);
+  if (v === 'today') start = new Date(today);
+  else if (v === 'month') start = new Date(today.getFullYear(), today.getMonth(), 1);
+  else start.setDate(today.getDate() - (Number(v) - 1)); // last N days incl. today
+  $('#rpFrom').value = toStr(start);
+  $('#rpTo').value = toStr(today);
+  loadReport();
+};
+// If the user edits a date directly, switch the preset to "Custom".
+window.onDateEdited = () => { const r = $('#rpRange'); if (r) r.value = 'custom'; };
 function reportParams() {
   return {
     from: new Date($('#rpFrom').value + 'T00:00:00').toISOString(),
@@ -961,14 +986,15 @@ window.loadReport = async () => {
       </div>`).join('') : '<p class="muted">No revenue in this range.</p>'}
     </div>
     <div class="card"><h3 style="margin-top:0">By shift</h3>
-      <p class="hint" style="margin-top:-4px">Tap a collected amount to see the cash / card split.</p>
+      <p class="hint" style="margin-top:-4px">Revenue &amp; loads count orders <b>accepted</b> in each shift. Collected counts money <b>received</b> during the shift — tap it for the cash / card split.</p>
       <div class="table-wrap"><table class="data"><thead><tr><th>Shift</th><th>Orders</th><th>Loads</th><th>Revenue</th><th>Collected</th></tr></thead>
       <tbody>${['AM', 'PM', 'Night'].map(s => { const b = r.byShift[s]; return `<tr><td><b>${s}</b> <span class="muted">${SHIFT_TIME[s]}</span></td><td>${b.orders}</td><td>${b.loads}</td><td>${money(b.revenue)}</td><td><button onclick="toggleBd('bd-${s}')" style="background:none;border:0;color:var(--accent);padding:0;cursor:pointer;font:inherit;text-decoration:underline">${money(b.collected)} ▾</button></td></tr>
       <tr id="bd-${s}" class="hidden"><td colspan="5" class="muted" style="padding-left:20px">↳ Cash ${money(b.cash)} · Card ${money(b.card)}</td></tr>`; }).join('')}</tbody></table></div>
     </div>
     <div class="card"><h3 style="margin-top:0">By staff</h3>
-      <div class="table-wrap"><table class="data"><thead><tr><th>Staff</th><th>Accepted</th><th>Cleaned</th><th>Ready</th><th>Picked up</th><th>Payments</th><th>Collected</th></tr></thead>
-      <tbody>${(r.byStaff || []).map(s => `<tr><td>${esc(s.name)}</td><td>${s.accepted}</td><td>${s.cleaned}</td><td>${s.ready}</td><td>${s.completed}</td><td>${s.payments}</td><td>${money(s.collected)}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">No activity</td></tr>'}</tbody></table></div>
+      <p class="hint" style="margin-top:-4px">Payments / Collected / Cash / Card count the money each person <b>took</b> in this range, by payment time — regardless of when the order was accepted.</p>
+      <div class="table-wrap"><table class="data"><thead><tr><th>Staff</th><th>Accepted</th><th>Cleaned</th><th>Ready</th><th>Picked up</th><th>Payments</th><th>Collected</th><th>Cash</th><th>Card</th></tr></thead>
+      <tbody>${(r.byStaff || []).map(s => `<tr><td>${esc(s.name)}</td><td>${s.accepted}</td><td>${s.cleaned}</td><td>${s.ready}</td><td>${s.completed}</td><td>${s.payments}</td><td>${money(s.collected)}</td><td>${money(s.cash)}</td><td>${money(s.card)}</td></tr>`).join('') || '<tr><td colspan="9" class="muted">No activity</td></tr>'}</tbody></table></div>
     </div>
     <div class="card"><h3 style="margin-top:0">Orders in range (${r.orders.length})</h3>
       <div class="table-wrap"><table class="data"><thead><tr><th>#</th><th>Date</th><th>Shift</th><th>Guest</th><th>Room</th><th>Loads</th><th>Total</th><th>Payment</th><th>Accepted</th><th>Ready</th><th>Paid by</th><th>Status</th></tr></thead>
@@ -1023,8 +1049,8 @@ window.exportPdf = () => {
     ${r.byDay.map(d => `<tr><td>${d.date}</td><td>${d.orders}</td><td>${d.loads}</td><td>${money(d.revenue)}</td></tr>`).join('')}</table>
     <h3>By shift</h3><table><tr><th>Shift</th><th>Orders</th><th>Loads</th><th>Revenue</th><th>Collected</th><th>Cash</th><th>Card</th></tr>
     ${['AM', 'PM', 'Night'].map(s => { const b = r.byShift[s]; return `<tr><td>${s} (${SHIFT_TIME[s]})</td><td>${b.orders}</td><td>${b.loads}</td><td>${money(b.revenue)}</td><td>${money(b.collected)}</td><td>${money(b.cash)}</td><td>${money(b.card)}</td></tr>`; }).join('')}</table>
-    <h3>By staff</h3><table><tr><th>Staff</th><th>Accepted</th><th>Cleaned</th><th>Ready</th><th>Picked up</th><th>Payments</th><th>Collected</th></tr>
-    ${(r.byStaff || []).map(s => `<tr><td>${esc(s.name)}</td><td>${s.accepted}</td><td>${s.cleaned}</td><td>${s.ready}</td><td>${s.completed}</td><td>${s.payments}</td><td>${money(s.collected)}</td></tr>`).join('')}</table>
+    <h3>By staff</h3><table><tr><th>Staff</th><th>Accepted</th><th>Cleaned</th><th>Ready</th><th>Picked up</th><th>Payments</th><th>Collected</th><th>Cash</th><th>Card</th></tr>
+    ${(r.byStaff || []).map(s => `<tr><td>${esc(s.name)}</td><td>${s.accepted}</td><td>${s.cleaned}</td><td>${s.ready}</td><td>${s.completed}</td><td>${s.payments}</td><td>${money(s.collected)}</td><td>${money(s.cash)}</td><td>${money(s.card)}</td></tr>`).join('')}</table>
     <h3>Orders</h3><table><tr><th>#</th><th>Shift</th><th>Guest</th><th>Room</th><th>Loads</th><th>Total</th><th>Payment</th><th>Accepted by</th><th>Paid by</th></tr>
     ${r.orders.map(o => `<tr><td>${o.number}</td><td>${o.shift}</td><td>${esc(o.guestName)}</td><td>${esc(o.room || '')}</td><td>${o.loads}</td><td>${money(o.price)}</td><td>${o.paymentStatus}</td><td>${esc(nm(o.acceptedBy))}</td><td>${esc(nm(o.paidBy))}</td></tr>`).join('')}</table>
     <p style="color:#888;font-size:12px;margin-top:20px">Generated ${new Date().toLocaleString()}</p>

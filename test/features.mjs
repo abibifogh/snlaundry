@@ -13,7 +13,7 @@ delete process.env.RESEND_API_KEY;
 
 const { handleRequest } = await import('../netlify/functions/api.js');
 const { sentLog, clearSentLog, inviteEmail } = await import('../netlify/functions/lib/email.js');
-const { effectiveBaseUrl, inQuietHours, findFollowUpOrders, findReadyTooLong } = await import('../netlify/functions/lib/logic.js');
+const { effectiveBaseUrl, inQuietHours, findFollowUpOrders, findReadyTooLong, revenueReport, shiftOf } = await import('../netlify/functions/lib/logic.js');
 const { runStuckCheck } = await import('../netlify/functions/stuck-check.js');
 const featStore = await import('../netlify/functions/lib/store.js');
 
@@ -356,6 +356,37 @@ try {
   const newDate = new Date(Date.now() - 5 * 86400000).toISOString();
   r = await api('PATCH', `/api/orders/${po.body.id}`, { headers: H(adminT), body: { paidAt: newDate } });
   ok('admin can change the payment date', r.status === 200 && r.body.paidAt === newDate, r.body.paidAt);
+
+  section('Report attributes payments by who took them and when (bugfix)');
+  {
+    const orders = await featStore.getCollection('orders');
+    const paidIso = '2026-06-15T09:55:00.000Z';
+    const acceptedIso = '2026-06-10T20:00:00.000Z'; // a different day and shift
+    orders.push({
+      id: 'ord_legacy_1039', number: 1039, status: 'completed',
+      guestName: 'Legacy Guest', room: '9', items: 20, loads: 2, price: 50,
+      createdAt: acceptedIso, acceptedAt: acceptedIso, acceptedBy: { id: 'u_ama', name: 'Ama' },
+      amountPaid: 50, paymentStatus: 'paid', paymentMethod: 'cash',
+      paidAt: paidIso, paidBy: { id: 'u_jess', name: 'Jessica' },
+      payments: [], // paid before the ledger existed — only legacy fields set
+    });
+    await featStore.saveCollection('orders', orders);
+
+    const rep = await revenueReport({ from: '2026-06-14T00:00:00.000Z', to: '2026-06-16T23:59:59.000Z' });
+    const jess = (rep.byStaff || []).find((s) => s.name === 'Jessica');
+    ok('payment attributed to whoever took it (Jessica), not the accepter', !!jess && jess.collected === 50 && jess.cash === 50 && jess.card === 0 && jess.payments === 1, JSON.stringify(jess));
+    const payShift = shiftOf(paidIso);
+    ok('collected lands in the shift the payment was taken', rep.byShift[payShift].collected === 50 && rep.byShift[payShift].cash === 50, JSON.stringify(rep.byShift));
+    ok('legacy pre-ledger payment is counted in totals + byMethod', rep.totals.collected === 50 && rep.byMethod.cash === 50, JSON.stringify({ t: rep.totals, m: rep.byMethod }));
+
+    const rep2 = await revenueReport({ from: '2026-06-15T00:00:00.000Z', to: '2026-06-15T23:59:59.000Z' });
+    ok('collected counts even when the order was accepted outside the window', rep2.totals.collected === 50, JSON.stringify(rep2.totals));
+    ok('revenue excludes an order accepted outside the window', rep2.totals.revenue === 0, JSON.stringify(rep2.totals));
+
+    // clean up so later bulk-delete counts are unaffected
+    const cleaned = (await featStore.getCollection('orders')).filter((o) => o.id !== 'ord_legacy_1039');
+    await featStore.saveCollection('orders', cleaned);
+  }
 
   section('Ready-for-pickup 12h alert (admin + chosen users)');
   await api('PATCH', `/api/cashiers/${yawId}`, { headers: H(adminT), body: { email: 'yaw@example.com' } });

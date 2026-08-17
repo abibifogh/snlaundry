@@ -620,13 +620,33 @@ export async function revenueReport({ from, to, shift } = {}) {
   if (shiftFilter) inRange = inRange.filter((o) => shiftOf(o.acceptedAt || o.createdAt) === shiftFilter);
 
   const revenue = sum(inRange.map((o) => Number(o.price) || 0));
-  const collected = sum(inRange.map((o) => Number(o.amountPaid) || 0));
-  // Cash/card split from the actual payment ledger (handles partial payments).
-  let cashCollected = 0; let cardCollected = 0;
-  for (const o of inRange) for (const p of (o.payments || [])) { if (p.method === 'card') cardCollected += Number(p.amount) || 0; else cashCollected += Number(p.amount) || 0; }
-  const byMethod = { cash: round2(cashCollected), card: round2(cardCollected) };
   const totalItems = sum(inRange.map((o) => o.items));
   const totalLoads = sum(inRange.map((o) => o.loads));
+
+  // ---- Money actually collected in the period ----
+  // Collected / cash / card are measured by WHEN a payment was taken and WHO took it,
+  // not by when the order was accepted. So a payment Jessica records at 09:55 counts
+  // for that moment and for her, even if the order was accepted on an earlier day.
+  // effectivePayments() also covers orders paid before the payment ledger existed
+  // (they only carry amountPaid / paidBy / paidAt).
+  const paidOrders = orders.filter((o) => o.status !== 'cancelled' && o.status !== 'new');
+  const paymentsInRange = [];
+  for (const o of paidOrders) {
+    for (const p of effectivePayments(o)) {
+      const atIso = p.at || o.paidAt || o.acceptedAt || o.createdAt;
+      const at = new Date(atIso);
+      if (at < fromD || at > toD) continue;
+      const pShift = shiftOf(atIso);
+      if (shiftFilter && pShift !== shiftFilter) continue;
+      paymentsInRange.push({ amount: Number(p.amount) || 0, method: p.method === 'card' ? 'card' : 'cash', at: atIso, shift: pShift, by: p.by, orderNumber: o.number });
+    }
+  }
+  const collected = sum(paymentsInRange.map((p) => p.amount));
+  const cashCollected = sum(paymentsInRange.filter((p) => p.method !== 'card').map((p) => p.amount));
+  const cardCollected = sum(paymentsInRange.filter((p) => p.method === 'card').map((p) => p.amount));
+  const byMethod = { cash: round2(cashCollected), card: round2(cardCollected) };
+  // What's still owed on orders that were accepted within this period.
+  const outstanding = sum(inRange.map((o) => Math.max(0, round2((Number(o.price) || 0) - (Number(o.amountPaid) || 0)))));
 
   // Daily breakdown.
   const byDayMap = {};
@@ -640,33 +660,42 @@ export async function revenueReport({ from, to, shift } = {}) {
   }
   const byDay = Object.values(byDayMap).sort((a, b) => a.date.localeCompare(b.date));
 
-  // Shift breakdown — categorized by the time the order was accepted.
+  // Shift breakdown. Orders / revenue / loads are counted by the shift the order was
+  // ACCEPTED in; collected / cash / card are counted by the shift the payment was TAKEN in.
   const byShift = { AM: shiftBucket('AM'), PM: shiftBucket('PM'), Night: shiftBucket('Night') };
   for (const o of inRange) {
     const s = byShift[shiftOf(o.acceptedAt || o.createdAt)];
     s.orders += 1; s.revenue += Number(o.price) || 0; s.loads += o.loads;
-    s.collected += Number(o.amountPaid) || 0;
-    for (const p of (o.payments || [])) { if (p.method === 'card') s.card += Number(p.amount) || 0; else s.cash += Number(p.amount) || 0; }
+  }
+  for (const p of paymentsInRange) {
+    const s = byShift[p.shift]; if (!s) continue;
+    s.collected += p.amount;
+    if (p.method === 'card') s.card += p.amount; else s.cash += p.amount;
   }
   Object.values(byShift).forEach((s) => { s.revenue = round2(s.revenue); s.collected = round2(s.collected); s.cash = round2(s.cash); s.card = round2(s.card); });
 
-  // Staff activity — who did what, and cash collected by whom.
+  // Staff activity — who did what (from orders accepted in range) and, separately,
+  // the money each person collected (from payments they took within range).
   const staff = {};
-  const bump = (ref, field, amount = 0) => {
-    if (!ref || !ref.name) return;
+  const ensure = (ref) => {
+    if (!ref || !ref.name) return null;
     const k = ref.id || ref.name;
-    if (!staff[k]) staff[k] = { name: ref.name, accepted: 0, cleaned: 0, ready: 0, completed: 0, payments: 0, collected: 0 };
-    staff[k][field] += 1;
-    if (amount) staff[k].collected += amount;
+    if (!staff[k]) staff[k] = { name: ref.name, accepted: 0, cleaned: 0, ready: 0, completed: 0, payments: 0, collected: 0, cash: 0, card: 0 };
+    return staff[k];
   };
+  const bump = (ref, field) => { const s = ensure(ref); if (s) s[field] += 1; };
   for (const o of inRange) {
     bump(o.acceptedBy, 'accepted');
     bump(o.cleaningBy, 'cleaned');
     bump(o.readyBy, 'ready');
     bump(o.completedBy, 'completed');
-    for (const p of (o.payments || [])) bump(p.by, 'payments', Number(p.amount) || 0);
   }
-  const byStaff = Object.values(staff).map((s) => ({ ...s, collected: round2(s.collected) }))
+  for (const p of paymentsInRange) {
+    const s = ensure(p.by); if (!s) continue;
+    s.payments += 1; s.collected += p.amount;
+    if (p.method === 'card') s.card += p.amount; else s.cash += p.amount;
+  }
+  const byStaff = Object.values(staff).map((s) => ({ ...s, collected: round2(s.collected), cash: round2(s.cash), card: round2(s.card) }))
     .sort((a, b) => b.collected - a.collected);
 
   return {
@@ -676,7 +705,7 @@ export async function revenueReport({ from, to, shift } = {}) {
       orders: inRange.length,
       revenue: round2(revenue),
       collected: round2(collected),
-      outstanding: round2(revenue - collected),
+      outstanding: round2(outstanding),
       items: totalItems,
       loads: totalLoads,
       avgOrderValue: inRange.length ? round2(revenue / inRange.length) : 0,
@@ -693,6 +722,15 @@ export async function revenueReport({ from, to, shift } = {}) {
 }
 
 function shiftBucket() { return { orders: 0, revenue: 0, collected: 0, cash: 0, card: 0, loads: 0 }; }
+
+// Payments for reporting. Prefer the ledger; fall back to a single synthetic payment
+// for orders paid before the ledger existed (they only carry amountPaid/paidBy/paidAt).
+function effectivePayments(o) {
+  if (o.payments && o.payments.length) return o.payments;
+  const amt = Number(o.amountPaid) || 0;
+  if (amt > 0) return [{ amount: amt, method: o.paymentMethod === 'card' ? 'card' : 'cash', at: o.paidAt || o.acceptedAt || o.createdAt, by: o.paidBy }];
+  return [];
+}
 
 export function reportToCsv(report) {
   const cur = report.currency?.code || '';
@@ -715,17 +753,17 @@ export function reportToCsv(report) {
   lines.push('Date,Orders,Loads,Items,Revenue');
   report.byDay.forEach((d) => lines.push(`${d.date},${d.orders},${d.loads},${d.items},${round2(d.revenue)}`));
   lines.push('');
-  lines.push('By shift');
-  lines.push('Shift,Orders,Loads,Revenue,Collected');
+  lines.push('By shift (collected = payments taken during that shift)');
+  lines.push('Shift,Orders,Loads,Revenue,Collected,Cash,Card');
   ['AM', 'PM', 'Night'].forEach((s) => {
     const b = report.byShift[s];
-    lines.push(`${s} (${SHIFT_LABEL[s]}),${b.orders},${b.loads},${b.revenue},${b.collected}`);
+    lines.push(`${s} (${SHIFT_LABEL[s]}),${b.orders},${b.loads},${b.revenue},${b.collected},${b.cash},${b.card}`);
   });
   lines.push('');
-  lines.push('By staff');
-  lines.push('Staff,Accepted,Cleaned,Ready,Completed,Payments,Cash+Card collected');
+  lines.push('By staff (collected = payments this person took)');
+  lines.push('Staff,Accepted,Cleaned,Ready,Completed,Payments,Collected,Cash,Card');
   (report.byStaff || []).forEach((s) => {
-    lines.push(`${csv(s.name)},${s.accepted},${s.cleaned},${s.ready},${s.completed},${s.payments},${s.collected}`);
+    lines.push(`${csv(s.name)},${s.accepted},${s.cleaned},${s.ready},${s.completed},${s.payments},${s.collected},${s.cash},${s.card}`);
   });
   lines.push('');
   lines.push('Orders');
