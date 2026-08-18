@@ -4,7 +4,7 @@
   "description": "In-house laundry management system for hotels/hostels (guest ordering, reception workflow, revenue reporting, guest messaging).",
   "type": "module",
   "scripts": {
-    "test": "node test/run-tests.mjs && node test/features.mjs",
+    "test": "node test/run-tests.mjs && node test/features.mjs && node test/sso.mjs",
     "dev": "netlify dev",
     "serve": "node scripts/dev-server.mjs",
     "gen-vapid": "node scripts/gen-vapid.mjs"

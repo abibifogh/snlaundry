@@ -8,6 +8,13 @@
   to = "/.netlify/functions/api/:splat"
   status = 200
 
+# Arriving from the group hub (Insight) already signed in. A rewrite rather
+# than a redirect, so the code is never visible as a /.netlify/functions/ URL.
+[[redirects]]
+  from = "/sso"
+  to = "/.netlify/functions/sso"
+  status = 200
+
 # Pretty routes for the guest + staff pages.
 [[redirects]]
   from = "/order"
