@@ -353,13 +353,41 @@ try {
   const bkt = r.body.byShift[nowShift];
   ok('by-shift bucket has cash + card fields', typeof bkt.cash === 'number' && typeof bkt.card === 'number');
   ok('by-shift cash + card equals collected', Math.abs((bkt.cash + bkt.card) - bkt.collected) < 0.01, JSON.stringify(bkt));
-  const newDate = new Date(Date.now() - 5 * 86400000).toISOString();
+  // A fixed date, deliberately, and one no window below reaches. This was
+  // `Date.now() - 5 days`, which meant the payment landed on a different day
+  // every day the suite ran — and on 18 August 2026 it landed exactly on the
+  // 13 August window three sections down, adding a stray 6 to a total that
+  // expected 70. A test that only passes on most days is worse than no test:
+  // it reports a money bug that is not there, on a date nobody can predict.
+  //
+  // Nothing here needs the date to be relative to today. What is being checked
+  // is that an admin may correct a payment date at all.
+  const newDate = '2026-05-04T13:45:00.000Z';
   r = await api('PATCH', `/api/orders/${po.body.id}`, { headers: H(adminT), body: { paidAt: newDate } });
   ok('admin can change the payment date', r.status === 200 && r.body.paidAt === newDate, r.body.paidAt);
+  {
+    // And that it went where it was told, rather than merely being accepted.
+    //
+    // Asserted on the ledger rather than on a day's total. This order was paid
+    // twice — 4 cash, then 6 card — and only the last payment moves, which is
+    // right: the cash was genuinely taken when it was taken. A whole-day total
+    // would therefore be 6 on most days and 10 on 4 May itself, when the cash
+    // leg is also "today". That is the same trap the fixed date above avoids,
+    // and an assertion is not exempt from it.
+    const stored = (await featStore.getCollection('orders')).find((o) => o.id === po.body.id);
+    ok('the corrected date reaches the ledger, not just the order', stored.payments.at(-1).at === newDate, JSON.stringify(stored.payments));
+    ok('the earlier payment stays when it was taken', stored.payments[0].at !== newDate, JSON.stringify(stored.payments[0]));
+
+    // And that reporting follows the correction. By method, because the card
+    // leg is the one that moved and the cash leg is wherever it was taken.
+    const moved = await revenueReport({ from: '2026-05-04', to: '2026-05-04' });
+    ok('the moved payment reports on its corrected date', moved.byMethod.card === 6, JSON.stringify(moved.byMethod));
+  }
 
   section('Report attributes payments by who took them and when (bugfix)');
   {
-    const orders = await featStore.getCollection('orders');
+    const keep = await featStore.getCollection('orders');
+    const orders = [];   // this section's own, for the reason given below
     const paidIso = '2026-06-15T09:55:00.000Z';
     const acceptedIso = '2026-06-10T20:00:00.000Z'; // a different day and shift
     orders.push({
@@ -383,9 +411,7 @@ try {
     ok('collected counts even when the order was accepted outside the window', rep2.totals.collected === 50, JSON.stringify(rep2.totals));
     ok('revenue excludes an order accepted outside the window', rep2.totals.revenue === 0, JSON.stringify(rep2.totals));
 
-    // clean up so later bulk-delete counts are unaffected
-    const cleaned = (await featStore.getCollection('orders')).filter((o) => o.id !== 'ord_legacy_1039');
-    await featStore.saveCollection('orders', cleaned);
+    await featStore.saveCollection('orders', keep);
   }
 
   section('Collected counts every payment taken in the window');
@@ -397,7 +423,13 @@ try {
     const jess = { id: 'u_jess', name: 'Jessica' };
     const mary = { id: 'u_mary', name: 'Mary' };
     const base = { guestName: 'G', room: '1', items: 10, loads: 1, createdAt: D1, acceptedAt: D1, acceptedBy: jess };
-    await featStore.saveCollection('orders', keep.concat([
+    // Only this section's own orders are in the store while it runs. Every
+    // assertion below states an exact total for a fixed window, and that is a
+    // claim about these fixtures. Orders created "now" by earlier sections pour
+    // into the same window whenever the suite happens to run on one of these
+    // dates, and the totals then fail for a reason that has nothing to do with
+    // the behaviour under test.
+    await featStore.saveCollection('orders', ([
       // legacy 60 (never in the ledger) topped up with 40 through the ledger
       { ...base, id: 'rc1', number: 9001, status: 'completed', price: 100, amountPaid: 100, paymentStatus: 'paid', paymentMethod: 'cash', paidAt: D2, paidBy: mary, payments: [{ id: 'p1', amount: 40, method: 'cash', at: D2, by: mary }] },
       // paid, then the order was cancelled — there is no refund flow, the money stays
@@ -438,7 +470,7 @@ try {
     const jess = { id: 'u_jess', name: 'Jessica' };
     // Exactly what the original applyPayment() left behind: status, method, paidAt,
     // paidBy — no amountPaid, no ledger. Its log line read "Payment received · card".
-    await featStore.saveCollection('orders', keep.concat([{
+    await featStore.saveCollection('orders', ([{
       id: 'ord_status_only', number: 1039, status: 'completed', guestName: 'V', room: "Milly's",
       items: 10, loads: 1, price: 70,
       createdAt: '2026-08-13T08:30:00.000Z', acceptedAt: '2026-08-13T08:30:00.000Z', acceptedBy: jess,
@@ -455,7 +487,7 @@ try {
     ok('an order marked paid is not also reported as owing', rep.totals.outstanding === 0, JSON.stringify(rep.totals));
 
     // A 'partial' order with no figure is unknowable — it must not be guessed at.
-    await featStore.saveCollection('orders', keep.concat([{
+    await featStore.saveCollection('orders', ([{
       id: 'ord_partial_only', number: 1044, status: 'completed', guestName: 'W', room: '2',
       items: 10, loads: 1, price: 70,
       createdAt: '2026-08-13T08:30:00.000Z', acceptedAt: '2026-08-13T08:30:00.000Z', acceptedBy: jess,
@@ -491,7 +523,7 @@ try {
   {
     const keep = await featStore.getCollection('orders');
     const jess = { id: 'u_jess', name: 'Jessica' };
-    await featStore.saveCollection('orders', keep.concat([
+    await featStore.saveCollection('orders', ([
       // generation 1: status only
       { id: 'bf1', number: 8001, status: 'completed', guestName: 'A', room: '1', items: 10, loads: 1, price: 70,
         createdAt: '2026-08-13T08:00:00.000Z', acceptedAt: '2026-08-13T08:00:00.000Z', acceptedBy: jess,
@@ -544,7 +576,7 @@ try {
       amountPaid: price, paymentStatus: 'paid', paymentMethod: method, paidAt: at, paidBy: jess,
       payments: [{ id: 'p' + id, amount: price, method, at, by: jess }],
     });
-    await featStore.saveCollection('orders', keep.concat([
+    await featStore.saveCollection('orders', ([
       mk('sb1', 7001, 70, 'cash', '2026-09-01T08:00:00.000Z'),
       mk('sb2', 7002, 30, 'card', '2026-09-01T09:00:00.000Z'),
       mk('sb3', 7003, 50, 'cash', '2026-09-01T15:00:00.000Z'),
