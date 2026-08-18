@@ -95,6 +95,14 @@ In Netlify: **Site configuration → Environment variables → Add**. Set `SESSI
 
 (Prefer Resend instead? Set `RESEND_API_KEY` and leave the `GMAIL_*` vars blank.)
 
+Two more, only if this site is joined to the group hub — see
+**Signing in from the group hub** below:
+
+| Key | Value |
+|-----|-------|
+| `INSIGHT_SSO_URL` | `https://insight.niceoperation.com/api/sso/redeem` |
+| `INSIGHT_SSO_SECRET` | The same value Insight holds as `SSO_SECRET_LAUNDRY` |
+
 Then **Deploys → Trigger deploy → Deploy site** so the variables take effect.
 
 ### 4. First-run setup
@@ -107,6 +115,53 @@ Open `https://<your-site>.netlify.app/app`. On first visit you'll create the **a
 - Print the **guest order QR code** shown at the bottom and place it at reception.
 
 Done. Guests scan the QR (or visit `/order`); staff work from `/app`.
+
+---
+
+## Signing in from the group hub
+
+If the group runs **Insight** — the reporting site that reads this laundry
+alongside attendance, breakfast and the restaurant — somebody who has signed in
+there can click **Laundry** and arrive at `/app` already signed in, without
+punching a PIN.
+
+To switch it on:
+
+1. Generate a shared secret:
+   `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`
+2. In Netlify → **Site configuration → Environment variables**, set
+   `INSIGHT_SSO_URL` to `https://insight.niceoperation.com/api/sso/redeem` and
+   `INSIGHT_SSO_SECRET` to that value. Redeploy so they take effect.
+3. In the attendance repository (which holds Insight), add the *same* value as
+   the repository secret `INSIGHT_SSO_SECRET_LAUNDRY`, then run
+   **Actions → Set Insight's secrets**.
+4. In Insight under **Accounts → Where each system lives**, set this site's
+   sign-in address to `https://<your-site>/sso` and tick the hand-off.
+
+### What actually happens
+
+What arrives at `/sso` is an opaque code, never an identity — thirty-two random
+bytes Insight will exchange, once, within ninety seconds. This site calls
+Insight back, server to server, with its own secret, and asks who the code was
+for. A URL ends up in a browser history, a proxy log and a `Referer` header, and
+none of those should ever have held somebody's address.
+
+Three rules it follows, and they are the whole reason the arrangement is safe:
+
+- **It never trusts the address bar.** A forged `/sso?code=…` is worthless.
+- **It never creates a cashier.** If Insight names somebody who has no cashier
+  record here, they are refused and told so by name. Otherwise whoever controls
+  the hub could mint themselves a till account.
+- **It never widens anybody.** The role Insight sends is ignored. What somebody
+  may do here is the role and permissions on their own cashier record, exactly
+  as when they type their PIN.
+
+Only cashiers with an **email address** on their record can be handed over — the
+address is the only identifier the two systems share. Set one under **Cashiers**
+for anybody who should be able to come through.
+
+Each system on the hub holds its own secret, so a compromised laundry cannot
+mint sessions on the restaurant or anywhere else.
 
 ---
 
@@ -167,8 +222,10 @@ RESEND_API_KEY=re_xxx EMAIL_FROM="Laundry <onboarding@resend.dev>" node scripts/
 ## Tests
 
 ```bash
-npm test                 # 47 backend/logic tests (order lifecycle, pricing, auth,
-                         # permissions, reporting, messaging, stuck-order alerts)
+npm test                 # backend/logic tests (order lifecycle, pricing, auth,
+                         # permissions, reporting, messaging, stuck-order alerts,
+                         # and the group-hub sign-in hand-off)
+node test/sso.mjs        # just the hand-off
 node test/dom-smoke.mjs  # browser smoke test (needs: npm i jsdom) — boots the real
                          # HTML/JS and drives the UI
 ```
