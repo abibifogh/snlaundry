@@ -69,10 +69,22 @@ export async function sendEmail({ to, subject, html, from }) {
 }
 
 // ---- Branded templates ----
+// Where this deployment lives, for links and images in emails. Mirrors
+// effectiveBaseUrl() in logic.js, which cannot be imported here without a cycle.
+function baseUrlOf(settings) {
+  const url = settings.baseUrl || process.env.URL || process.env.DEPLOY_PRIME_URL || process.env.DEPLOY_URL || '';
+  return url.replace(/\/$/, '');
+}
+
 function shell(settings, bodyHtml) {
   const name = escapeHtml(settings.hostelName || 'Hostel Laundry');
-  const logo = settings.logoDataUrl
-    ? `<img src="${settings.logoDataUrl}" alt="${name}" style="max-height:52px;margin-bottom:8px" />`
+  const base = baseUrlOf(settings);
+  // The logo is LINKED, never inlined. A data: URL is refused by every major mail
+  // client and, at up to ~530KB of base64, pushes the message past Gmail's ~102KB
+  // limit — which clips it and leaves the rest of the email blank. Without a base
+  // URL there is nowhere to link to, so the wordmark below stands on its own.
+  const logo = settings.logoDataUrl && base
+    ? `<img src="${base}/api/logo?v=${encodeURIComponent(settings.logoVersion || 0)}" alt="${name}" style="max-height:52px;margin-bottom:8px" />`
     : '';
   const accent = settings.accentColor || '#0f766e';
   return `
@@ -92,9 +104,8 @@ function statusBadge(label, color) {
 
 export function orderEmail(kind, order, settings) {
   const cur = settings.currency?.symbol || '';
-  const track = settings.baseUrl
-    ? `${settings.baseUrl}/track?id=${order.publicId}`
-    : null;
+  const base = baseUrlOf(settings);
+  const track = base ? `${base}/track?id=${order.publicId}` : null;
   const trackBtn = track
     ? `<p style="text-align:center;margin:22px 0">
          <a href="${track}" style="background:${settings.accentColor || '#0f766e'};color:#fff;text-decoration:none;padding:11px 22px;border-radius:8px;font-weight:600;display:inline-block">Track your order</a>
@@ -178,7 +189,7 @@ export function inviteEmail(cashier, settings, opts = {}) {
   const perms = isAdmin
     ? 'As an administrator you have full access: orders, payments, reports, staff and settings.'
     : permsSentence(cashier.permissions);
-  const appUrl = settings.baseUrl ? `${settings.baseUrl.replace(/\/$/, '')}/app` : null;
+  const appUrl = baseUrlOf(settings) ? `${baseUrlOf(settings)}/app` : null;
 
   const pinBox = `
     <div style="text-align:center;margin:22px 0">

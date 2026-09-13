@@ -106,6 +106,8 @@ export async function updateSettings(patch) {
   next.requireEmail = !!next.requireEmail;
   next.requireRoomOnAccept = !!next.requireRoomOnAccept;
   next.alertRecipients = normalizeEmails(next.alertRecipients);
+  // Stamp the logo when it changes so emails can cache-bust /api/logo.
+  if (next.logoDataUrl !== cur.logoDataUrl) next.logoVersion = Date.now();
   await writeJSON(K_SETTINGS, next);
   return next;
 }
@@ -771,6 +773,18 @@ function repriceStatus(o) {
   const paid = amountPaidOf(o);
   if (paid <= 0) { o.paymentStatus = 'unpaid'; return; }
   o.paymentStatus = paid >= price - 0.001 ? 'paid' : 'partial';
+}
+
+// --------------------------------------------------------------------- Logo --
+// The logo is stored as a data URL because the admin uploads it straight from the
+// browser. Email clients refuse data: images and Gmail clips any message over
+// ~102KB, so emails link to this endpoint instead of carrying the bytes inline.
+export async function getLogoImage() {
+  const settings = await getSettings();
+  const src = settings.logoDataUrl || '';
+  const m = /^data:([\w.+-]+\/[\w.+-]+);base64,(.+)$/i.exec(src);
+  if (!m) throw httpError(404, 'No logo has been uploaded.');
+  return { contentType: m[1], base64: m[2], version: settings.logoVersion || 0 };
 }
 
 // ------------------------------------------------------------------ Messages --

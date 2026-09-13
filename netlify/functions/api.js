@@ -42,6 +42,12 @@ export async function handleRequest({ method, path, query = {}, body = {}, heade
     // ---------- meta / public ----------
     if (parts[0] === 'health') return json(200, { ok: true, storage: await (await import('./lib/store.js')).storeInfo() });
 
+    // The hostel logo as a real image, for email clients (public, cacheable).
+    if (parts[0] === 'logo' && m === 'GET') {
+      const img = await L.getLogoImage();
+      return { status: 200, body: img.base64, contentType: img.contentType, isBase64: true };
+    }
+
     if (parts[0] === 'status') {
       const settings = await L.getSettings();
       return json(200, { configured: settings.configured, isSetup: await L.isSetup(), hostelName: settings.hostelName });
@@ -300,6 +306,18 @@ export const handler = async (event) => {
     query, body, headers,
   });
 
+  if (res.isBase64) {
+    return {
+      statusCode: res.status,
+      headers: {
+        'Content-Type': res.contentType,
+        // Immutable per version: the URL carries ?v= and changes when the logo does.
+        'Cache-Control': 'public, max-age=86400',
+      },
+      body: res.body,
+      isBase64Encoded: true,
+    };
+  }
   if (res.contentType === 'text/csv') {
     return {
       statusCode: res.status,
