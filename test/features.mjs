@@ -12,7 +12,7 @@ process.env.SESSION_SECRET = 'feat-secret';
 delete process.env.RESEND_API_KEY;
 
 const { handleRequest } = await import('../netlify/functions/api.js');
-const { sentLog, clearSentLog, inviteEmail } = await import('../netlify/functions/lib/email.js');
+const { sentLog, clearSentLog, inviteEmail, orderEmail, followUpEmail, readyTooLongEmail } = await import('../netlify/functions/lib/email.js');
 const { effectiveBaseUrl, inQuietHours, findFollowUpOrders, findReadyTooLong, revenueReport, reportToCsv, shiftOf } = await import('../netlify/functions/lib/logic.js');
 const { runStuckCheck } = await import('../netlify/functions/stuck-check.js');
 const featStore = await import('../netlify/functions/lib/store.js');
@@ -654,6 +654,58 @@ try {
     await api('DELETE', `/api/discounts/${dFixed}`, { headers: H(adminT) });
     r = await api('GET', '/api/discounts', { headers: H(adminT) });
     ok('discounts can be removed', r.body.length === 0, JSON.stringify(r.body));
+  }
+
+  section('Emails link the logo instead of inlining it');
+  {
+    // A logo well within the 400KB the upload form allows. Inlined as base64 this
+    // alone puts every email past Gmail's ~102KB limit, which clips the message and
+    // leaves the body blank — and no major client renders a data: image anyway.
+    const png = Buffer.from('89504e470d0a1a0a', 'hex').toString('base64') + 'A'.repeat(300 * 1024);
+    const logo = `data:image/png;base64,${png}`;
+    r = await api('PUT', '/api/settings', { headers: H(adminT), body: { logoDataUrl: logo, baseUrl: 'https://laundry.example.com' } });
+    ok('the logo is stored and stamped with a version', r.status === 200 && r.body.logoVersion > 0, JSON.stringify({ v: r.body.logoVersion }));
+    const stamped = r.body.logoVersion;
+
+    const settings = r.body;
+    const sample = { number: 1, publicId: 'pub1', guestName: 'Ama B', items: 10, loads: 1, price: 70, pickupAt: '2026-09-14T18:00:00.000Z' };
+    const mails = [
+      ['order', orderEmail('accepted', sample, settings).html],
+      ['follow-up', followUpEmail([{ number: 1, guestName: 'Ama B', room: '3', status: 'accepted', acceptedAt: '2026-09-13T08:00:00.000Z' }], settings).html],
+      ['ready-too-long', readyTooLongEmail([{ number: 1, guestName: 'Ama B', room: '3', readyAt: '2026-09-13T08:00:00.000Z' }], settings, 12).html],
+      ['invite', inviteEmail({ name: 'Yaw', role: 'cashier', permissions: {} }, settings, { pin: '4321' }).html],
+    ];
+    for (const [what, html] of mails) {
+      ok(`${what} email inlines no data: image`, !/src="data:/.test(html), html.slice(0, 200));
+      ok(`${what} email stays well under Gmail's clip limit`, Buffer.byteLength(html, 'utf8') < 100 * 1024, `${(Buffer.byteLength(html, 'utf8') / 1024).toFixed(1)} KB`);
+    }
+    ok('the logo is linked over https with a cache-busting version', mails[0][1].includes(`https://laundry.example.com/api/logo?v=${stamped}`), (mails[0][1].match(/<img src="[^"]*"/) || [])[0]);
+
+    // The endpoint itself: public, real bytes, right content type.
+    r = await api('GET', '/api/logo');
+    ok('the logo endpoint needs no sign-in', r.status === 200, `got ${r.status}`);
+    ok('it returns the decoded image, not a data URL', r.isBase64 === true && r.contentType === 'image/png' && r.body === png, JSON.stringify({ t: r.contentType, b64: r.isBase64 }));
+
+    // Changing the logo must move the version so mail clients refetch it.
+    r = await api('PUT', '/api/settings', { headers: H(adminT), body: { logoDataUrl: logo.replace('AAAA', 'BBBB') } });
+    ok('changing the logo bumps the version', r.body.logoVersion > stamped, JSON.stringify({ was: stamped, now: r.body.logoVersion }));
+    r = await api('PUT', '/api/settings', { headers: H(adminT), body: { hostelName: 'somewhere nice' } });
+    ok('an unrelated settings change leaves it alone', r.body.logoVersion > stamped && r.body.logoVersion === (await api('GET', '/api/settings', { headers: H(adminT) })).body.logoVersion);
+
+    // No logo at all: the endpoint 404s and emails simply carry the wordmark.
+    r = await api('PUT', '/api/settings', { headers: H(adminT), body: { logoDataUrl: '' } });
+    const noLogo = r.body;
+    r = await api('GET', '/api/logo');
+    ok('no logo uploaded gives a clean 404', r.status === 404, `got ${r.status}`);
+    ok('emails still render without a logo', !/<img/.test(orderEmail('accepted', sample, noLogo).html));
+
+    // No base URL to link to: drop the image rather than fall back to inlining.
+    const noBase = { ...noLogo, logoDataUrl: logo, baseUrl: '' };
+    const savedEnv = process.env.URL; delete process.env.URL;
+    ok('without a base URL the logo is dropped, never inlined', !/src="data:/.test(orderEmail('accepted', sample, noBase).html));
+    if (savedEnv) process.env.URL = savedEnv;
+
+    await api('PUT', '/api/settings', { headers: H(adminT), body: { logoDataUrl: '', baseUrl: '' } });
   }
 
   section('Admin: delete orders in a timeframe');
