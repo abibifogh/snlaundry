@@ -599,6 +599,7 @@ function buildTabs() {
   if (can('viewReports')) tabs.push({ id: 'reports', label: 'Reports' });
   if (can('manageCashiers')) tabs.push({ id: 'cashiers', label: 'Cashiers' });
   if (can('manageSettings')) tabs.push({ id: 'settings', label: 'Settings' });
+  tabs.push({ id: 'guide', label: 'Guide' }); // the laundry handbook — every role
   const host = $('#tabs'); host.innerHTML = '';
   tabs.forEach(t => {
     const b = document.createElement('button');
@@ -620,6 +621,7 @@ async function renderTab(silent) {
     if (state.tab === 'reports') return renderReports(view);
     if (state.tab === 'cashiers') return renderCashiers(view);
     if (state.tab === 'settings') return renderSettings(view);
+    if (state.tab === 'guide') return renderGuide(view, state.user);
   } catch (e) { if (!silent) view.innerHTML = `<div class="notice err">${esc(e.message)}</div>`; }
 }
 

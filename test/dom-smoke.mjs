@@ -56,8 +56,8 @@ async function loadPage(htmlFile, jsFile, { search = '' } = {}) {
   window.scrollTo = () => {};
   global.window = window; global.document = window.document; global.localStorage = window.localStorage;
   global.fetch = window.fetch; global.FileReader = window.FileReader; global.URLSearchParams = window.URLSearchParams;
-  const js = readFileSync(path.join(ROOT, 'public/assets', jsFile), 'utf8');
-  window.eval(js);
+  // app.html loads guide.js before app.js; mirror that when asked for a list.
+  for (const f of [].concat(jsFile)) window.eval(readFileSync(path.join(ROOT, 'public/assets', f), 'utf8'));
   await sleep(60);
   return window;
 }
@@ -84,7 +84,7 @@ try {
   ok('track link populated', /\/track\?id=pub_/.test(w.document.querySelector('#trackLink').href), w.document.querySelector('#trackLink').href);
 
   out.push('\n▶ Reception app (app.js) — setup already done, so shows lock screen');
-  w = await loadPage('app.html', 'app.js');
+  w = await loadPage('app.html', ['guide.js', 'app.js']);
   ok('lock screen visible (not setup)', !w.document.querySelector('#lockScreen').classList.contains('hidden'));
   ok('PIN pad rendered', w.document.querySelectorAll('#pinpad button').length === 12);
   // keyboard PIN entry works on the lock screen
@@ -96,7 +96,7 @@ try {
   ['1', '2', '3', '4', 'OK'].forEach(k => [...w.document.querySelectorAll('#pinpad button')].find(b => b.textContent === k).click());
   await sleep(120);
   ok('app shell shown after correct PIN', !w.document.querySelector('#app').classList.contains('hidden'));
-  ok('admin sees all tabs (orders,messages,reports,cashiers,settings)', w.document.querySelectorAll('#tabs button').length === 5, w.document.querySelectorAll('#tabs button').length + '');
+  ok('admin sees all tabs (orders,messages,reports,cashiers,settings,guide)', w.document.querySelectorAll('#tabs button').length === 6, w.document.querySelectorAll('#tabs button').length + '');
   ok('who-name shows Ada', w.document.querySelector('#whoName').textContent === 'Ada');
   await sleep(60);
   ok('orders board rendered with the guest order', /Zoe Q/.test(w.document.querySelector('#view').innerHTML), 'no order in view');
@@ -130,6 +130,26 @@ try {
   await sleep(80);
   w.openCashier();
   ok('add-cashier modal has permission checkboxes', w.document.querySelectorAll('[data-perm]').length >= 8, w.document.querySelectorAll('[data-perm]').length + '');
+  w.closeModal();
+
+  // guide tab: the built-in laundry handbook
+  [...w.document.querySelectorAll('#tabs button')].find(b => b.dataset.tab === 'guide').click();
+  await sleep(80);
+  const gv = w.document.querySelector('#view');
+  ok('guide tab renders the handbook', /Laundry Handbook/.test(gv.innerHTML) && gv.querySelectorAll('.guide-sec').length >= 12, gv.querySelectorAll('.guide-sec').length + ' sections');
+  ok('guide names the real app buttons', [...gv.querySelectorAll('kbd.ui')].map(k => k.textContent).filter((v, i, a) => a.indexOf(v) === i).sort().join('|').includes('Mark ready|Start cleaning'), [...gv.querySelectorAll('kbd.ui')].map(k => k.textContent).join(','));
+  ok('guide carries none of the old wording', !/quest|password|Start Washing|Done ☑/i.test(gv.textContent));
+  ok('guide has the order flow and the who-to-ask table', !!gv.querySelector('#g-flow ol') && !!gv.querySelector('#g-limits table'));
+  ok('reception/admin see the pointer note; it is not for attendants', /attendants' guide/.test(gv.innerHTML));
+  const boxes = gv.querySelectorAll('[data-ck]');
+  ok('daily checklist is interactive', boxes.length >= 20, boxes.length + ' boxes');
+  // runScripts:'outside-only' never fires inline onchange="" attributes, so do what the
+  // attribute would: toggle the box and hand it to the handler (as the other tests do).
+  boxes[0].checked = true; w.guideTick(boxes[0]); await sleep(20);
+  ok('a tick is remembered on this device for today', /"ck0":1/.test(w.localStorage.getItem('guide-checklist-' + new Date().toISOString().slice(0, 10)) || ''));
+  ok('progress counter follows the ticks', /^1 of \d+$/.test(w.document.querySelector('#guideProgress').textContent), w.document.querySelector('#guideProgress').textContent);
+  w.guideResetChecklist();
+  ok('reset clears the ticks', ![...gv.querySelectorAll('[data-ck]')].some(c => c.checked) && /^0 of/.test(w.document.querySelector('#guideProgress').textContent));
 } catch (err) {
   fail++; out.push(`\n💥 ${err.stack || err}`);
 }
