@@ -52,6 +52,20 @@ export function verifyToken(token) {
   return body;
 }
 
+// ---- The reports key: a fixed key for a reporting system (Insight) ----
+//
+// A PIN session lasts 12 hours, so a system that reads the revenue report every
+// night cannot hold one. REPORTS_API_KEY is set by hand in Netlify and handed to
+// that system; it opens the revenue report (read-only) and nothing else. Unset,
+// it opens nothing.
+export function isReportsKey(token, env = process.env) {
+  const key = String(env.REPORTS_API_KEY || '');
+  if (!key || !token || typeof token !== 'string') return false;
+  const a = crypto.createHash('sha256').update(token).digest();
+  const b = crypto.createHash('sha256').update(key).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
 // ---- Permission catalogue (what each access level can toggle) ----
 export const PERMISSIONS = {
   acceptOrders: 'Accept new guest orders',
