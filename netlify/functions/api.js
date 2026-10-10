@@ -3,7 +3,7 @@
 // handleRequest() is exported separately so the test harness can drive every
 // endpoint without spinning up HTTP.
 
-import { verifyToken, can, PERMISSIONS } from './lib/auth.js';
+import { verifyToken, can, PERMISSIONS, isReportsKey } from './lib/auth.js';
 import * as L from './lib/logic.js';
 import { vapidPublicKey, addSubscription, removeSubscription, listDevices, updateSubscription, removeSubscriptionById } from './lib/push.js';
 
@@ -269,7 +269,12 @@ export async function handleRequest({ method, path, query = {}, body = {}, heade
         const report = await L.revenueReport(query);
         return { status: 200, body: L.reportToCsv(report), contentType: 'text/csv', filename: 'revenue-report.csv' };
       }
-      if (m === 'GET') { await requirePerm(headers, 'viewReports'); return json(200, await L.revenueReport(query)); }
+      if (m === 'GET') {
+        // Insight reads this every night with the reports key; people with their PIN session.
+        const bearer = (headers['authorization'] || headers['Authorization'] || '').replace(/^Bearer\s+/i, '');
+        if (!isReportsKey(bearer)) await requirePerm(headers, 'viewReports');
+        return json(200, await L.revenueReport(query));
+      }
     }
 
     return json(404, { error: `No route for ${m} /${parts.join('/')}` });

@@ -125,6 +125,26 @@ try {
   const csv = await api('GET', '/api/report/csv', { headers: H(adminT) });
   ok('CSV includes By shift + By staff', /By shift/.test(csv.body) && /By staff/.test(csv.body) && /Accepted by/.test(csv.body));
 
+  section('Reports key: the revenue report for Insight, and nothing else');
+  const KEY = 'insight-reads-the-laundry';
+  delete process.env.REPORTS_API_KEY;
+  r = await api('GET', '/api/report', { headers: H(KEY) });
+  ok('with no key set, a key opens nothing', r.status === 401, `got ${r.status}`);
+  process.env.REPORTS_API_KEY = KEY;
+  r = await api('GET', '/api/report', { headers: H(KEY) });
+  ok('the key opens the revenue report', r.status === 200 && r.body.totals && Array.isArray(r.body.orders), `got ${r.status}`);
+  r = await api('GET', '/api/report', { headers: H('not-the-key') });
+  ok('a wrong key is refused', r.status === 401, `got ${r.status}`);
+  r = await api('GET', '/api/report/csv', { headers: H(KEY) });
+  ok('the key does not export the CSV', r.status === 401, `got ${r.status}`);
+  for (const [m, p] of [['GET', '/api/orders'], ['GET', '/api/settings'], ['GET', '/api/cashiers'], ['PUT', '/api/settings']]) {
+    r = await api(m, p, { headers: H(KEY), body: { hostelName: 'taken over' } });
+    ok(`the key does not open ${m} ${p}`, r.status === 401, `got ${r.status}`);
+  }
+  r = await api('GET', '/api/report', { headers: H(adminT) });
+  ok('a PIN session still opens the report', r.status === 200);
+  delete process.env.REPORTS_API_KEY;
+
   section('Report filtered to a single shift');
   const nowH = new Date().getHours();
   const curShift = (nowH >= 6 && nowH < 14) ? 'AM' : (nowH >= 14 && nowH < 22) ? 'PM' : 'Night';

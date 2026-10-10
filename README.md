@@ -163,6 +163,28 @@ for anybody who should be able to come through.
 Each system on the hub holds its own secret, so a compromised laundry cannot
 mint sessions on the restaurant or anywhere else.
 
+## Letting Insight read the revenue report
+
+Insight reads this laundry's revenue report every night, and on **Check laundry
+now**, to set it beside the front desk's shifts. A PIN session lasts 12 hours,
+so Insight uses a fixed **reports key** instead. The key opens `GET /api/report`
+and nothing else: not orders, payments, cashiers, settings or the CSV export.
+With no key set, nothing is opened by one.
+
+1. Generate a key:
+   `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`
+   (or any long password from a password manager).
+2. In Netlify → **Site configuration → Environment variables**, add
+   `REPORTS_API_KEY` with that value. Redeploy so it takes effect.
+3. In the attendance repository (which holds Insight), add the *same* value as
+   the repository secret `INSIGHT_LAUNDRY_TOKEN`, then run
+   **Actions → Set Insight's secrets**.
+4. In Insight under **Setup → The four systems**, check this site's address is
+   filled in for the laundry.
+
+To change the key, repeat steps 1 to 3 with a new value; the old one stops
+working as soon as Netlify redeploys.
+
 ---
 
 ## Email
@@ -256,7 +278,7 @@ node test/dom-smoke.mjs  # browser smoke test (needs: npm i jsdom) — boots the
 - PINs are stored salted + hashed (SHA-256), never in plain text.
 - Staff sessions are short-lived HMAC-signed tokens (12h) signed with `SESSION_SECRET`.
 - Guest tracking links use an unguessable random ID and expose only guest-safe fields (no internal logs, no other orders).
-- All staff/admin API routes require a valid session; sensitive actions require the specific permission.
+- All staff/admin API routes require a valid session; sensitive actions require the specific permission. The one exception is the revenue report, which the `REPORTS_API_KEY` (if set) also opens, read-only.
 - Always set a strong `SESSION_SECRET` in production.
 
 ## License
