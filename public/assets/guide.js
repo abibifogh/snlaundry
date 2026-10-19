@@ -147,6 +147,20 @@ const GUIDE = {
     },
 
     {
+      id: 'linen-app',
+      title: 'Linen in the app: every piece has a label',
+      intro: 'Every sheet, pillowcase and towel has a small QR label with its own code, like L00042. Scanning the label is how the app knows where each piece is. Scan with the [[📷 Camera]] button, a handheld scanner, or type the code.',
+      steps: [
+        '**Sending to the wash.** Open **Linen → Wash** and press [[Send soiled linen to wash]]. Everything in the soiled bin is ticked; untick what you are not washing now.',
+        '**Receiving from the wash.** Press [[Receive]] on the batch and scan each piece as you fold it. Mark anything that needs another wash as **Re-wash** and anything torn or stained for good as **Damaged**. Choose where the clean linen is going, then press [[Confirm received]].',
+        '**Anything you did not scan is marked missing.** Look on the lines, in the machines and on the trolley before you confirm. If it turns up later, scan it under **Pieces** and press [[Found it]].',
+        '**Changing a bed or towels (housekeeping).** Open **Linen → Rooms** and tap the bed. What is on it comes off into the soiled bin; tap **Missing** for anything that is not there. Scan each clean piece you put on, or press [[Pick for me]] and take exactly the codes it shows. Press [[Done]].',
+        '**Damaged linen.** Press [[Report damage]], scan it and say what happened. It leaves stock and the manager sees it in the loss report.',
+      ],
+      note: 'A piece is never "probably somewhere". If the app says it is in your batch and you cannot find it, say so: it shows as missing with your batch number, and that is how lost linen gets found the same day.',
+    },
+
+    {
       id: 'machines',
       title: 'Machine quick guide',
       intro: 'Match the item to the machine and setting. Times are for a full cycle.',

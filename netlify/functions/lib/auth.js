@@ -81,7 +81,13 @@ export const PERMISSIONS = {
   exportReports: 'Export reports (CSV / PDF)',
   manageCashiers: 'Add/remove cashiers & set access levels',
   manageSettings: 'Change hostel settings (pricing, currency, logo, etc.)',
+  linenUse: 'Linen: change beds and towels, restock cupboards, count stock, report damage',
+  linenWash: 'Linen: send linen to the wash and receive it back',
+  linenCheckout: 'Linen: mark rooms as checked out',
+  linenManage: 'Linen: set up rooms and items, add new pieces, write off missing, reports',
 };
+
+export const LINEN_PERMS = ['linenUse', 'linenWash', 'linenCheckout', 'linenManage'];
 
 // Admins implicitly have everything.
 export function can(user, permission) {
@@ -106,6 +112,19 @@ export function defaultLaundryPermissions() {
     exportReports: false,
     manageCashiers: false,
     manageSettings: false,
+    linenWash: true,
+  };
+}
+
+// Default permissions for housekeeping: the Linen tab only — change beds and
+// towels, restock cupboards, count stock and report damage.
+export function defaultHousekeepingPermissions() {
+  return {
+    acceptOrders: false,
+    advanceStatus: false,
+    takePayment: false,
+    messageGuests: false,
+    linenUse: true,
   };
 }
 
@@ -125,6 +144,7 @@ export function defaultCashierPermissions() {
     exportReports: false,
     manageCashiers: false,
     manageSettings: false,
+    linenCheckout: true, // reception marks rooms as checked out
   };
 }
 

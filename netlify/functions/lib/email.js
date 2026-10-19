@@ -173,7 +173,10 @@ const PERM_PHRASES = {
   modifyAccepted: 'edit accepted orders', cancelOrders: 'cancel orders', takePayment: 'take payments',
   messageGuests: 'reply to guests', viewReports: 'view reports', exportReports: 'export reports',
   manageCashiers: 'manage staff', manageSettings: 'change settings',
+  linenUse: 'change beds and towels', linenWash: 'send linen to the wash and receive it back',
+  linenCheckout: 'mark rooms as checked out', linenManage: 'manage linen stock',
 };
+const ROLE_NAMES = { cashier: 'Cashier', laundry: 'Laundry', housekeeping: 'Housekeeping' };
 function permsSentence(permissions = {}) {
   const list = Object.keys(PERM_PHRASES).filter((k) => permissions[k]).map((k) => PERM_PHRASES[k]);
   if (!list.length) return 'Your administrator will set what you can do.';
@@ -185,7 +188,7 @@ export function inviteEmail(cashier, settings, opts = {}) {
   const accent = settings.accentColor || '#0f766e';
   const first = firstName(cashier.name);
   const isAdmin = cashier.role === 'admin';
-  const roleLine = isAdmin ? 'Administrator — full access' : 'Cashier';
+  const roleLine = isAdmin ? 'Administrator — full access' : (ROLE_NAMES[cashier.role] || 'Cashier');
   const perms = isAdmin
     ? 'As an administrator you have full access: orders, payments, reports, staff and settings.'
     : permsSentence(cashier.permissions);
@@ -218,7 +221,7 @@ export function inviteEmail(cashier, settings, opts = {}) {
     <p style="font-size:13px;color:#9ca3af;margin-top:18px">If you weren't expecting this, you can ignore this email.</p>`;
 
   return {
-    subject: `You're invited to ${settings.hostelName || 'the laundry'} — ${isAdmin ? 'Administrator' : 'Cashier'} access`,
+    subject: `You're invited to ${settings.hostelName || 'the laundry'} — ${isAdmin ? 'Administrator' : (ROLE_NAMES[cashier.role] || 'Cashier')} access`,
     html: shell(settings, body),
   };
 }
