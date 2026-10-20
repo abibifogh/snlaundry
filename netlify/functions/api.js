@@ -3,8 +3,9 @@
 // handleRequest() is exported separately so the test harness can drive every
 // endpoint without spinning up HTTP.
 
-import { verifyToken, can, PERMISSIONS, isReportsKey } from './lib/auth.js';
+import { verifyToken, can, PERMISSIONS, isReportsKey, LINEN_PERMS } from './lib/auth.js';
 import * as L from './lib/logic.js';
+import * as Linen from './lib/linen.js';
 import { vapidPublicKey, addSubscription, removeSubscription, listDevices, updateSubscription, removeSubscriptionById } from './lib/push.js';
 
 const json = (status, body) => ({ status, body });
@@ -22,6 +23,15 @@ async function requirePerm(headers, perm) {
   const user = await L.getCashierById(payload.id);
   if (!user || !user.active) throw L.httpError(401, 'Session no longer valid.');
   if (!can(user, perm)) throw L.httpError(403, 'You do not have permission for this action.');
+  return user;
+}
+
+// Any one of several permissions (e.g. anybody with a linen permission may look).
+async function requireAnyPerm(headers, perms) {
+  const payload = requireUser(headers);
+  const user = await L.getCashierById(payload.id);
+  if (!user || !user.active) throw L.httpError(401, 'Session no longer valid.');
+  if (!perms.some((p) => can(user, p))) throw L.httpError(403, 'You do not have permission for this action.');
   return user;
 }
 
@@ -260,6 +270,27 @@ export async function handleRequest({ method, path, query = {}, body = {}, heade
     if (parts[0] === 'settings') {
       if (m === 'GET') { await requireUser(headers); return json(200, await L.getSettings()); }
       if (m === 'PUT') { await requirePerm(headers, 'manageSettings'); return json(200, await L.updateSettings(body)); }
+    }
+
+    // ---------- bed linen & towels ----------
+    if (parts[0] === 'linen') {
+      const sub = parts[1];
+      if (m === 'GET' && !sub) { await requireAnyPerm(headers, LINEN_PERMS); return json(200, await Linen.linenView()); }
+      if (m === 'GET' && sub === 'piece' && parts[2]) { await requireAnyPerm(headers, LINEN_PERMS); return json(200, await Linen.pieceHistory(decodeURIComponent(parts[2]))); }
+      if (m === 'PUT' && sub === 'setup') { const u = await requirePerm(headers, 'linenManage'); return json(200, await Linen.saveLinenSetup(body, u)); }
+      if (m === 'POST' && sub === 'pieces') { const u = await requirePerm(headers, 'linenManage'); return json(201, await Linen.addPieces(body, u)); }
+      if (m === 'POST' && sub === 'change') { const u = await requirePerm(headers, 'linenUse'); return json(200, await Linen.changePlace(body, u)); }
+      if (m === 'POST' && sub === 'checkout') { const u = await requirePerm(headers, 'linenCheckout'); return json(200, await Linen.markCheckout(body, u)); }
+      if (m === 'POST' && sub === 'wash') { const u = await requirePerm(headers, 'linenWash'); return json(201, await Linen.sendToWash(body, u)); }
+      if (m === 'POST' && sub === 'batches' && parts[2] && parts[3] === 'receive') { const u = await requirePerm(headers, 'linenWash'); return json(200, await Linen.receiveBatch(parts[2], body, u)); }
+      if (m === 'POST' && sub === 'move') { const u = await requirePerm(headers, 'linenUse'); return json(200, await Linen.moveClean(body, u)); }
+      if (m === 'POST' && sub === 'count') { const u = await requirePerm(headers, 'linenUse'); return json(200, await Linen.stockCount(body, u)); }
+      if (m === 'POST' && sub === 'found') { const u = await requireAnyPerm(headers, ['linenUse', 'linenWash']); return json(200, await Linen.markFound(body, u)); }
+      if (m === 'POST' && sub === 'retire') {
+        // Damage and wear: anyone who handles linen. Lost / charged: managers only.
+        const u = ['lost', 'charged'].includes(body.reason) ? await requirePerm(headers, 'linenManage') : await requireAnyPerm(headers, ['linenUse', 'linenWash']);
+        return json(200, await Linen.retirePieces(body, u));
+      }
     }
 
     // ---------- reports ----------

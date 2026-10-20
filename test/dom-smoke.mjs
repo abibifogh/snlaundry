@@ -56,8 +56,10 @@ async function loadPage(htmlFile, jsFile, { search = '' } = {}) {
   window.scrollTo = () => {};
   global.window = window; global.document = window.document; global.localStorage = window.localStorage;
   global.fetch = window.fetch; global.FileReader = window.FileReader; global.URLSearchParams = window.URLSearchParams;
-  // app.html loads guide.js before app.js; mirror that when asked for a list.
-  for (const f of [].concat(jsFile)) window.eval(readFileSync(path.join(ROOT, 'public/assets', f), 'utf8'));
+  // app.html loads guide.js, app.js and linen.js as separate classic scripts that
+  // share one global scope. An eval of strict code gets its own scope, so run the
+  // list as one script to share it the same way.
+  window.eval([].concat(jsFile).map((f) => readFileSync(path.join(ROOT, 'public/assets', f), 'utf8')).join('\n;\n'));
   await sleep(60);
   return window;
 }
@@ -84,7 +86,7 @@ try {
   ok('track link populated', /\/track\?id=pub_/.test(w.document.querySelector('#trackLink').href), w.document.querySelector('#trackLink').href);
 
   out.push('\n▶ Reception app (app.js) — setup already done, so shows lock screen');
-  w = await loadPage('app.html', ['guide.js', 'app.js']);
+  w = await loadPage('app.html', ['guide.js', 'app.js', 'linen.js']);
   ok('lock screen visible (not setup)', !w.document.querySelector('#lockScreen').classList.contains('hidden'));
   ok('PIN pad rendered', w.document.querySelectorAll('#pinpad button').length === 12);
   // keyboard PIN entry works on the lock screen
@@ -96,7 +98,7 @@ try {
   ['1', '2', '3', '4', 'OK'].forEach(k => [...w.document.querySelectorAll('#pinpad button')].find(b => b.textContent === k).click());
   await sleep(120);
   ok('app shell shown after correct PIN', !w.document.querySelector('#app').classList.contains('hidden'));
-  ok('admin sees all tabs (orders,messages,reports,cashiers,settings,guide)', w.document.querySelectorAll('#tabs button').length === 6, w.document.querySelectorAll('#tabs button').length + '');
+  ok('admin sees all tabs (orders,linen,messages,reports,cashiers,settings,guide)', w.document.querySelectorAll('#tabs button').length === 7, w.document.querySelectorAll('#tabs button').length + '');
   ok('who-name shows Ada', w.document.querySelector('#whoName').textContent === 'Ada');
   await sleep(60);
   ok('orders board rendered with the guest order', /Zoe Q/.test(w.document.querySelector('#view').innerHTML), 'no order in view');
@@ -137,7 +139,7 @@ try {
   await sleep(80);
   const gv = w.document.querySelector('#view');
   ok('guide tab renders the handbook', /Laundry Handbook/.test(gv.innerHTML) && gv.querySelectorAll('.guide-sec').length >= 12, gv.querySelectorAll('.guide-sec').length + ' sections');
-  ok('guide names the real app buttons', [...gv.querySelectorAll('kbd.ui')].map(k => k.textContent).filter((v, i, a) => a.indexOf(v) === i).sort().join('|').includes('Mark ready|Start cleaning'), [...gv.querySelectorAll('kbd.ui')].map(k => k.textContent).join(','));
+  ok('guide names the real app buttons', ['Mark ready', 'Start cleaning', 'Confirm received', 'Pick for me'].every(n => [...gv.querySelectorAll('kbd.ui')].some(k => k.textContent === n)), [...gv.querySelectorAll('kbd.ui')].map(k => k.textContent).join(','));
   ok('guide carries none of the old wording', !/quest|password|Start Washing|Done ☑/i.test(gv.textContent));
   ok('guide has the order flow and the who-to-ask table', !!gv.querySelector('#g-flow ol') && !!gv.querySelector('#g-limits table'));
   ok('reception/admin see the pointer note; it is not for attendants', /attendants' guide/.test(gv.innerHTML));
@@ -150,6 +152,53 @@ try {
   ok('progress counter follows the ticks', /^1 of \d+$/.test(w.document.querySelector('#guideProgress').textContent), w.document.querySelector('#guideProgress').textContent);
   w.guideResetChecklist();
   ok('reset clears the ticks', ![...gv.querySelectorAll('[data-ck]')].some(c => c.checked) && /^0 of/.test(w.document.querySelector('#guideProgress').textContent));
+
+  out.push('\n▶ Linen tab (linen.js)');
+  await handleRequest({ method: 'PUT', path: '/api/linen/setup', headers: H, body: { rooms: [
+    { name: 'Akoma', cupboard: true, beds: [{ label: 'Bed', size: 'Double' }], towels: { htowel: 1, ftowel: 1 } },
+  ] } });
+  const added = await handleRequest({ method: 'POST', path: '/api/linen/pieces', headers: H, body: { typeId: 'dsheet', qty: 4 } });
+  await handleRequest({ method: 'POST', path: '/api/linen/pieces', headers: H, body: { typeId: 'pcase', qty: 2 } });
+  const tabBtn = [...w.document.querySelectorAll('#tabs button')].find(b => b.dataset.tab === 'linen');
+  tabBtn.click(); await sleep(100);
+  let lv = w.document.querySelector('#view');
+  ok('linen overview renders counts and alerts', /Bed linen &amp; towels|Bed linen & towels/.test(lv.innerHTML) && /Needs attention/.test(lv.innerHTML), lv.innerHTML.slice(0, 200));
+  ok('overview flags the bed that is not made up', /not made up/.test(lv.textContent));
+  w.lnGo('rooms'); await sleep(80);
+  ok('rooms view lists Akoma with its bed and towels', /Akoma/.test(w.document.querySelector('#lnView').textContent) && w.document.querySelectorAll('.ln-place').length === 2);
+  w.lnOpenChange(0, 0); await sleep(20);
+  const scan = (code) => { const el = w.document.querySelector('#chgScan'); el.value = code; el.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter' })); };
+  scan(added.body.codes[0].toLowerCase());
+  ok('scanning a clean sheet adds it (case-insensitive)', w.document.querySelectorAll('.ln-chip').length === 1, w.document.querySelector('#chgScanMsg').textContent);
+  scan('L99999');
+  ok('an unknown code shows an error', /isn't a known piece/.test(w.document.querySelector('#chgScanMsg').textContent));
+  w.lnChgPick(); await sleep(10);
+  ok('"Pick for me" fills the rest of the set', w.document.querySelectorAll('.ln-chip').length === 3 && /Full set/.test(w.document.querySelector('.modal').textContent));
+  await w.lnChgSubmit(false); await sleep(80);
+  let doc = (await handleRequest({ method: 'GET', path: '/api/linen', headers: H })).body;
+  ok('the bed is made with 3 pieces', doc.pieces.filter(p => p.status === 'in_use').length === 3 && doc.rooms[0].beds[0].state === 'made');
+  for (const sub of ['wash', 'stock', 'pieces', 'reports', 'activity', 'setup', 'overview']) {
+    w.lnGo(sub); await sleep(60);
+    const html = w.document.querySelector('#view').innerHTML;
+    ok(`${sub} view renders without errors`, !/notice err/.test(html) && html.length > 200, html.slice(0, 160));
+  }
+  w.lnGo('setup'); await sleep(60);
+  ok('setup shows bed sets and rooms', /What each bed takes/.test(w.document.querySelector('#view').textContent) && /Has a cupboard/.test(w.document.querySelector('#view').textContent));
+  w.LN.draft.rooms[0].beds.push({ label: 'Bed 2', size: 'King' }); w.lnGo('setup'); await sleep(60);
+  ok('setup draft survives a redraw', w.document.querySelectorAll('.ln-bedrow').length === 2);
+  await w.lnSaveSetup(); await sleep(60);
+  doc = (await handleRequest({ method: 'GET', path: '/api/linen', headers: H })).body;
+  ok('saving setup adds the new bed', doc.rooms[0].beds.length === 2 && doc.rooms[0].beds[1].size === 'King');
+
+  out.push('\n▶ Housekeeping sign-in');
+  await handleRequest({ method: 'POST', path: '/api/cashiers', headers: H, body: { name: 'Ama', pin: '5555', role: 'housekeeping' } });
+  w = await loadPage('app.html', ['guide.js', 'app.js', 'linen.js']);
+  ['5', '5', '5', '5', 'OK'].forEach(k => [...w.document.querySelectorAll('#pinpad button')].find(b => b.textContent === k).click());
+  await sleep(150);
+  const hkTabs = [...w.document.querySelectorAll('#tabs button')].map(b => b.dataset.tab).join(',');
+  ok('housekeeping sees only Linen and Guide', hkTabs === 'linen,guide', hkTabs);
+  ok('housekeeping lands on the linen overview, no shift bar', /Needs attention/.test(w.document.querySelector('#view').textContent) && !/Start shift/.test(w.document.querySelector('#view').innerHTML));
+  ok('housekeeping has no Setup or Losses screens', !/lnGo\('setup'\)|Losses &amp; reorder/.test(w.document.querySelector('.ln-subnav').innerHTML));
 } catch (err) {
   fail++; out.push(`\n💥 ${err.stack || err}`);
 }

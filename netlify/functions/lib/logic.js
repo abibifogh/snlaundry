@@ -3,13 +3,16 @@
 
 import { readJSON, writeJSON, getCollection, saveCollection } from './store.js';
 import {
-  hashPin, verifyPin, signToken, defaultCashierPermissions, defaultLaundryPermissions, newId, can,
+  hashPin, verifyPin, signToken, defaultCashierPermissions, defaultLaundryPermissions, defaultHousekeepingPermissions, newId, can,
 } from './auth.js';
 
-const ROLES = ['admin', 'cashier', 'laundry'];
+const ROLES = ['admin', 'cashier', 'laundry', 'housekeeping'];
 function normalizeRole(r) { return ROLES.includes(r) ? r : 'cashier'; }
 function defaultPermsFor(role) {
-  return role === 'admin' ? {} : role === 'laundry' ? defaultLaundryPermissions() : defaultCashierPermissions();
+  if (role === 'admin') return {};
+  if (role === 'laundry') return defaultLaundryPermissions();
+  if (role === 'housekeeping') return defaultHousekeepingPermissions();
+  return defaultCashierPermissions();
 }
 import { sendEmail, orderEmail, inviteEmail } from './email.js';
 import { sendPushToAll } from './push.js';
@@ -20,6 +23,7 @@ const K_ORDERS = 'orders';
 const K_META = 'meta';
 const K_SHIFTS = 'shifts';
 const K_DISCOUNTS = 'discounts';
+const K_LINEN = 'linen';
 
 export const STATUSES = ['new', 'accepted', 'cleaning', 'ready', 'completed', 'cancelled'];
 const FLOW = { accepted: 'cleaning', cleaning: 'ready', ready: 'completed' };
@@ -853,6 +857,7 @@ export async function exportAll() {
     shifts: await getCollection(K_SHIFTS),
     discounts: await getCollection(K_DISCOUNTS),
     meta: await readJSON(K_META, null),
+    linen: await readJSON(K_LINEN, null),
   };
 }
 
@@ -870,6 +875,7 @@ export async function importAll(data) {
   if (Array.isArray(data.shifts)) await saveCollection(K_SHIFTS, data.shifts);
   if (Array.isArray(data.discounts)) await saveCollection(K_DISCOUNTS, data.discounts);
   if (data.meta) await writeJSON(K_META, data.meta);
+  if (data.linen) await writeJSON(K_LINEN, data.linen);
   return {
     ok: true,
     counts: { cashiers: (data.cashiers || []).length, orders: (data.orders || []).length, shifts: (data.shifts || []).length, discounts: (data.discounts || []).length },

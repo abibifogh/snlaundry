@@ -37,6 +37,7 @@ async function api(method, path, body) {
   return data;
 }
 
+function isHousekeeping() { return state.user?.role === 'housekeeping'; }
 function can(perm) {
   if (!state.user) return false;
   if (state.user.role === 'admin') return true;
@@ -422,9 +423,16 @@ async function enterApp() {
   resetIdle();
   state.knownOrderIds = null;
   state.pendingMsg = 0; state.pendingFollowUp = 0; state._lastFollowUp = 0; state._lastFollowUpPing = 0;
+  buildTabs();
+  if (isHousekeeping()) {
+    // No till, no guest orders: no shift prompts, order chimes or polling.
+    if (state.poll) clearInterval(state.poll);
+    if (state.pingTimer) clearInterval(state.pingTimer);
+    selectTab('linen');
+    return;
+  }
   await refreshShift(); // load shift status before first render so the shift bar shows
   await refreshAlerts();
-  buildTabs();
   selectTab('orders');
   checkShiftBoundary();
   if (state.pendingStartShift) { state.pendingStartShift = false; state._startHandover = true; openStartShift(); }
@@ -594,7 +602,9 @@ window.doCloseShift = async () => {
 };
 
 function buildTabs() {
-  const tabs = [{ id: 'orders', label: 'Orders' }];
+  // Housekeeping only handles linen; everybody else starts on the order board.
+  const tabs = isHousekeeping() ? [] : [{ id: 'orders', label: 'Orders' }];
+  if (lnCanSee()) tabs.push({ id: 'linen', label: 'Linen' });
   if (can('messageGuests')) tabs.push({ id: 'messages', label: 'Messages' });
   if (can('viewReports')) tabs.push({ id: 'reports', label: 'Reports' });
   if (can('manageCashiers')) tabs.push({ id: 'cashiers', label: 'Cashiers' });
@@ -622,6 +632,7 @@ async function renderTab(silent) {
     if (state.tab === 'cashiers') return renderCashiers(view);
     if (state.tab === 'settings') return renderSettings(view);
     if (state.tab === 'guide') return renderGuide(view, state.user);
+    if (state.tab === 'linen') return await renderLinen(view);
   } catch (e) { if (!silent) view.innerHTML = `<div class="notice err">${esc(e.message)}</div>`; }
 }
 
@@ -1145,6 +1156,7 @@ window.openCashier = (c) => {
     <select id="cshRole" onchange="onRoleChange(this.value)">
       <option value="cashier" ${c && c.role === 'cashier' ? 'selected' : ''}>Cashier (reception)</option>
       <option value="laundry" ${c && c.role === 'laundry' ? 'selected' : ''}>Laundry person (cleaning → ready)</option>
+      <option value="housekeeping" ${c && c.role === 'housekeeping' ? 'selected' : ''}>Housekeeping (linen only)</option>
       <option value="admin" ${c && c.role === 'admin' ? 'selected' : ''}>Admin (full access)</option>
     </select>
     <label>PIN ${c ? '(leave blank to keep current)' : '(4–8 digits)'}</label>
@@ -1159,8 +1171,9 @@ window.openCashier = (c) => {
   if (!c) onRoleChange('cashier'); // seed default permissions for a new staff member
 };
 const ROLE_DEFAULTS = {
-  cashier: { acceptOrders: true, advanceStatus: true, takePayment: true, messageGuests: true },
-  laundry: { advanceStatus: true },
+  cashier: { acceptOrders: true, advanceStatus: true, takePayment: true, messageGuests: true, linenCheckout: true },
+  laundry: { advanceStatus: true, linenWash: true },
+  housekeeping: { linenUse: true },
   admin: {},
 };
 window.onRoleChange = (role) => {

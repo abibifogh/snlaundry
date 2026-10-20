@@ -62,6 +62,19 @@ Runs entirely on **GitHub + Netlify**. No separate database server:
 - **Installable app (PWA)** with **push notifications** — new orders, messages and follow-ups reach every device that enabled alerts **even when the app is fully closed**. The one exception is the **"start a shift"** reminder: in Settings → Notification devices, an admin ticks exactly which device(s) should receive that one when closed (everyone still hears it in-app).
 - **Admin can bulk-delete orders** created within a chosen date range (Settings → Delete orders).
 
+**Bed linen & towels (Linen tab)**
+- **Every piece is tracked by its own code** (L00001 …) on a printed QR label. Staff scan with the phone camera, a handheld USB/Bluetooth scanner (it types the code and presses Enter), or type the code.
+- Each piece is always in one state: **clean** (storeroom or a room's cupboard), **in use** (on a bed, or a room's towels), **soiled**, **in the wash**, **missing**, or **out of stock** (damaged, worn out, lost, charged to a guest). Every move records who did it and when, and each piece keeps its own history.
+- **Rooms** (Setup): each room's beds and sizes (Single/Double/Queen/King), its towels, and whether it has its own **linen cupboard**. What each bed size takes is set once; defaults follow the handbook (double sheet + cover sheet; queen/king: big sheet + 2 double sheets).
+- **Change a bed or towels**: tap it, everything on it comes off into the soiled bin (or is marked missing / stays), scan what goes on, or press *Pick for me* (room's cupboard first, then the storeroom, least-washed first).
+- **Reception marks rooms checked out**; their beds and towels show as due until changed. Beds are also due after a set number of days (default 3), towels after 1.
+- **Wash batches**: send the soiled bin, then scan each piece back as *back clean*, *re-wash* or *damaged*. Anything not scanned is marked missing against that batch. Batches still out after 24 h are flagged.
+- **Counts**: scan everything clean in the storeroom or a cupboard; unscanned pieces become missing (with a note), scanned pieces are recorded there.
+- **Losses & reorder** (admins): missing now, lost/charged and damaged/worn by period and their cost, where losses happen, a priced **reorder list** that brings every item back to **3 sets per bed and bathroom** (admin-set) and replaces pieces near the end of their wash life. CSV export of every piece.
+- **Labels**: Setup → *Add new linen* creates the pieces and offers **Print labels** (QR + code + item), or print labels for any filtered list under *Pieces*. Use wash-proof labels.
+- **Roles & permissions**: new **Housekeeping** role (Linen and Guide only — no orders, chimes or shift prompts). New permissions *linenUse*, *linenWash* (laundry by default), *linenCheckout* (cashiers by default) and *linenManage* (admins).
+- Linen is included in **backup & restore**.
+
 ---
 
 ## Deploy in ~10 minutes
@@ -248,6 +261,7 @@ npm test                 # backend/logic tests (order lifecycle, pricing, auth,
                          # permissions, reporting, messaging, stuck-order alerts,
                          # and the group-hub sign-in hand-off)
 node test/sso.mjs        # just the hand-off
+node test/linen.mjs      # bed linen & towels
 node test/dom-smoke.mjs  # browser smoke test (needs: npm i jsdom) — boots the real
                          # HTML/JS and drives the UI
 ```
