@@ -189,6 +189,16 @@ try {
   await w.lnSaveSetup(); await sleep(60);
   doc = (await handleRequest({ method: 'GET', path: '/api/linen', headers: H })).body;
   ok('saving setup adds the new bed', doc.rooms[0].beds.length === 2 && doc.rooms[0].beds[1].size === 'King');
+  w.lnGo('setup'); await sleep(60);
+  w.lnAddSize(); await sleep(30);
+  const zi = w.LN.draft.bedSizes.length - 1;
+  w.lnRenameSize(zi, 'Bunk'); await sleep(30);
+  ok('admin can add and name a bed size, and beds can pick it', [...w.document.querySelectorAll('.ln-bedrow select option')].some((o) => o.value === 'Bunk'));
+  w.lnRenameSize(w.LN.draft.bedSizes.findIndex((z) => z.name === 'King'), 'Super king'); await sleep(30);
+  ok('renaming a size renames it on the beds in the draft', w.LN.draft.rooms[0].beds[1].size === 'Super king');
+  await w.lnSaveSetup(); await sleep(60);
+  doc = (await handleRequest({ method: 'GET', path: '/api/linen', headers: H })).body;
+  ok('saved sizes include Bunk and the renamed Super king bed', !!doc.bedSets.Bunk && doc.rooms[0].beds[1].size === 'Super king' && !doc.bedSets.King);
 
   out.push('\n▶ Housekeeping sign-in');
   await handleRequest({ method: 'POST', path: '/api/cashiers', headers: H, body: { name: 'Ama', pin: '5555', role: 'housekeeping' } });

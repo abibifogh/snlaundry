@@ -169,6 +169,24 @@ try {
   doc = (await api('GET', '/api/linen', { headers: A })).body;
   ok('a type with pieces is hidden, not deleted', r.status === 200 && doc.types.find((t) => t.id === 'dsheet').active === false);
 
+  section('Bed sizes are the admin\'s own list');
+  const sizesNow = Object.entries(doc.bedSets).map(([name, set]) => ({ name, originalName: name, set }));
+  r = await api('PUT', '/api/linen/setup', { headers: hk, body: { bedSizes: [...sizesNow, { name: 'Bunk', set: { pcase: 1 } }] } });
+  ok('housekeeping cannot change bed sizes', r.status === 403);
+  r = await api('PUT', '/api/linen/setup', { headers: A, body: { bedSizes: [...sizesNow, { name: 'Bunk', set: { pcase: 1 } }] } });
+  ok('admin adds a Bunk size with its own set', r.status === 200 && r.body.bedSets.Bunk && r.body.bedSets.Bunk.pcase === 1, JSON.stringify(r.body.bedSets));
+  r = await api('PUT', '/api/linen/setup', { headers: A, body: { bedSizes: [...sizesNow, { name: 'double', set: {} }] } });
+  ok('a size cannot be listed twice', r.status === 400 && /twice/.test(r.body.error));
+  r = await api('PUT', '/api/linen/setup', { headers: A, body: { bedSizes: [] } });
+  ok('at least one size is kept', r.status === 400);
+  r = await api('PUT', '/api/linen/setup', { headers: A, body: { bedSizes: sizesNow.filter((z) => z.name !== 'Double').concat({ name: 'Bunk', originalName: 'Bunk', set: { pcase: 1 } }) } });
+  ok('a size still used by a bed cannot be removed', r.status === 400 && /Double bed/.test(r.body.error), JSON.stringify(r.body));
+  r = await api('PUT', '/api/linen/setup', { headers: A, body: { bedSizes: sizesNow.map((z) => z.name === 'Double' ? { ...z, name: 'Standard double' } : z) } });
+  doc = (await api('GET', '/api/linen', { headers: A })).body;
+  ok('renaming a size moves every bed of that size', r.status === 200 && doc.rooms[0].beds.every((b) => b.size === 'Standard double') && doc.bedSets['Standard double'].dsheet === 2 && !doc.bedSets.Double && !doc.bedSets.Bunk, JSON.stringify(doc.rooms[0].beds));
+  r = await api('PUT', '/api/linen/setup', { headers: A, body: { rooms: [{ name: 'Akoma', originalName: 'Akoma', cupboard: true, beds: [{ label: 'Bed', size: 'Futon' }], towels: {} }, ...doc.rooms.filter((x) => x.name !== 'Akoma').map((x) => ({ ...x, originalName: x.name }))] } });
+  ok('a bed must use one of the sizes', r.status === 400 && /Futon/.test(r.body.error));
+
   section('Backup includes linen');
   r = await api('GET', '/api/backup', { headers: A });
   ok('backup carries the linen document', r.status === 200 && r.body.linen && r.body.linen.pieces.length === 11, `pieces ${r.body.linen && r.body.linen.pieces.length}`);

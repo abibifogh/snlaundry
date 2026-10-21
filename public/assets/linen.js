@@ -28,7 +28,6 @@ const LN_STATUS = {
   washing: ['In the wash', 'ln-violet'], missing: ['Missing', 'ln-bad'], retired: ['Out of stock', 'ln-mute'],
 };
 const LN_REASONS = { damaged: 'Damaged', worn: 'Worn out', lost: 'Lost', charged: 'Charged to guest' };
-const LN_SIZES = ['Single', 'Double', 'Queen', 'King'];
 
 function lnCanSee() { return ['linenUse', 'linenWash', 'linenCheckout', 'linenManage'].some(can); }
 
@@ -889,7 +888,7 @@ function lnActivity(v) {
 function lnSetup(v) {
   const d = LN.doc;
   if (!LN.draft) {
-    LN.draft = JSON.parse(JSON.stringify({ par: d.par, bedChangeDays: d.bedChangeDays, towelChangeDays: d.towelChangeDays, washAlertHours: d.washAlertHours, types: d.types, bedSets: d.bedSets, rooms: d.rooms.map((r) => ({ ...r, originalName: r.name })) }));
+    LN.draft = JSON.parse(JSON.stringify({ par: d.par, bedChangeDays: d.bedChangeDays, towelChangeDays: d.towelChangeDays, washAlertHours: d.washAlertHours, types: d.types, bedSizes: Object.entries(d.bedSets).map(([name, set]) => ({ name, originalName: name, set })), rooms: d.rooms.map((r) => ({ ...r, originalName: r.name })) }));
   }
   const g = LN.draft;
   const bedTypes = g.types.filter((t) => t.category === 'bed' && t.active);
@@ -926,9 +925,12 @@ function lnSetup(v) {
       </tbody></table></div>
       <button class="small secondary" style="margin-top:8px" onclick="LN.draft.types.push({name:'New item',category:'bed',cost:0,washLife:200,active:true});lnGo('setup')">+ Add item</button></div>
     <div class="card"><h3 style="margin:0 0 6px">What each bed takes</h3>
-      <div class="table-wrap"><table class="data"><thead><tr><th>Bed size</th>${bedTypes.map((t) => `<th>${esc(t.name)}</th>`).join('')}</tr></thead><tbody>
-      ${LN_SIZES.map((s) => `<tr><td><b>${s}</b></td>${bedTypes.map((t) => `<td><input type="number" min="0" max="20" value="${(g.bedSets[s] || {})[t.id] || 0}" oninput="lnSetQty(LN.draft.bedSets,'${s}','${t.id}',this.value)" style="max-width:80px"></td>`).join('')}</tr>`).join('')}
-      </tbody></table></div></div>
+      <p class="hint">Name your own bed sizes (e.g. Bunk, Super king). Renaming a size renames it on every bed; a size can only be removed once no bed uses it.</p>
+      <div class="table-wrap"><table class="data"><thead><tr><th>Bed size</th>${bedTypes.map((t) => `<th>${esc(t.name)}</th>`).join('')}<th></th></tr></thead><tbody>
+      ${g.bedSizes.map((z, zi) => `<tr><td><input value="${esc(z.name)}" onchange="lnRenameSize(${zi},this.value)" aria-label="Bed size name" style="max-width:160px"></td>${bedTypes.map((t) => `<td><input type="number" min="0" max="20" value="${(z.set || {})[t.id] || 0}" oninput="lnSetQty(LN.draft.bedSizes[${zi}],'set','${t.id}',this.value)" style="max-width:80px"></td>`).join('')}
+        <td><button class="small ghost" onclick="lnRemoveSize(${zi})" aria-label="Remove bed size">✕</button></td></tr>`).join('')}
+      </tbody></table></div>
+      <button class="small secondary" style="margin-top:8px" onclick="lnAddSize()">+ Add bed size</button></div>
     <div class="card"><h3 style="margin:0 0 6px">Rooms</h3><p class="hint">Each bed, the room's towels, and whether the room has its own linen cupboard.</p>
       ${settingsRooms.length ? `<button class="small secondary" onclick="lnImportRooms()">Add ${settingsRooms.length} room(s) from Settings → Rooms</button>` : ''}
       <div class="ln-setrooms">${g.rooms.map((r, ri) => `
@@ -938,18 +940,40 @@ function lnSetup(v) {
             <button class="small danger" onclick="LN.draft.rooms.splice(${ri},1);lnGo('setup')">Remove room</button></div>
           <label>Beds</label>
           ${r.beds.map((b, bi) => `<div class="ln-bedrow"><input value="${esc(b.label)}" oninput="LN.draft.rooms[${ri}].beds[${bi}].label=this.value" placeholder="e.g. Bed 1">
-            <select onchange="LN.draft.rooms[${ri}].beds[${bi}].size=this.value">${LN_SIZES.map((s) => `<option ${b.size === s ? 'selected' : ''}>${s}</option>`).join('')}</select>
+            <select onchange="LN.draft.rooms[${ri}].beds[${bi}].size=this.value">${g.bedSizes.map((z) => `<option value="${esc(z.name)}" ${b.size === z.name ? 'selected' : ''}>${esc(z.name)}</option>`).join('')}</select>
             <button class="small ghost" onclick="LN.draft.rooms[${ri}].beds.splice(${bi},1);lnGo('setup')" aria-label="Remove bed">✕</button></div>`).join('')}
-          <button class="small secondary" onclick="LN.draft.rooms[${ri}].beds.push({label:'Bed ${r.beds.length + 1}',size:'Double'});lnGo('setup')">+ Bed</button>
+          <button class="small secondary" onclick="LN.draft.rooms[${ri}].beds.push({label:'Bed ${r.beds.length + 1}',size:lnDefaultSize()});lnGo('setup')">+ Bed</button>
           ${bathTypes.length ? `<label>Towels for the room</label><div class="ln-towels">${bathTypes.map((t) => `<span><input type="number" min="0" max="20" value="${(r.towels || {})[t.id] || 0}" oninput="lnSetQty(LN.draft.rooms[${ri}],'towels','${t.id}',this.value)"> ${esc(t.name)}</span>`).join('')}</div>` : ''}
         </div>`).join('')}</div>
-      <button class="small secondary" style="margin-top:10px" onclick="LN.draft.rooms.push({name:'',cupboard:false,beds:[{label:'Bed 1',size:'Double'}],towels:{}});lnGo('setup')">+ Add room</button></div>
+      <button class="small secondary" style="margin-top:10px" onclick="LN.draft.rooms.push({name:'',cupboard:false,beds:[{label:'Bed 1',size:lnDefaultSize()}],towels:{}});lnGo('setup')">+ Add room</button></div>
     <div class="ln-savebar"><button class="secondary" onclick="LN.draft=null;lnGo('setup')">Undo changes</button><button onclick="lnSaveSetup()">Save setup</button></div>`;
 }
 window.lnSetQty = (obj, key, typeId, val) => { obj[key] = obj[key] || {}; const n = Math.max(0, Math.round(+val || 0)); if (n) obj[key][typeId] = n; else delete obj[key][typeId]; };
+// Bed sizes are the admin's own list. A rename moves every bed of that size with it.
+window.lnDefaultSize = () => { const z = LN.draft.bedSizes; return (z.find((x) => x.name === 'Double') || z[0] || { name: '' }).name; };
+window.lnRenameSize = (zi, val) => {
+  const z = LN.draft.bedSizes[zi], name = String(val).trim();
+  if (!name || LN.draft.bedSizes.some((x, i) => i !== zi && x.name.toLowerCase() === name.toLowerCase())) {
+    alert(name ? `There is already a "${name}" size.` : 'A bed size needs a name.'); return lnGo('setup');
+  }
+  LN.draft.rooms.forEach((r) => r.beds.forEach((b) => { if (b.size === z.name) b.size = name; }));
+  z.name = name; lnGo('setup');
+};
+window.lnRemoveSize = (zi) => {
+  const z = LN.draft.bedSizes[zi];
+  const using = LN.draft.rooms.filter((r) => r.beds.some((b) => b.size === z.name)).map((r) => r.name);
+  if (using.length) return alert(`${z.name} beds are still in ${using.join(', ')}. Change those beds to another size first.`);
+  if (LN.draft.bedSizes.length === 1) return alert('Keep at least one bed size.');
+  LN.draft.bedSizes.splice(zi, 1); lnGo('setup');
+};
+window.lnAddSize = () => {
+  let n = 'New size', i = 2;
+  while (LN.draft.bedSizes.some((x) => x.name === n)) n = `New size ${i++}`;
+  LN.draft.bedSizes.push({ name: n, set: {} }); lnGo('setup');
+};
 window.lnImportRooms = () => {
   (state.settings?.rooms || []).filter((n) => !LN.draft.rooms.some((r) => r.name === n))
-    .forEach((n) => LN.draft.rooms.push({ name: n, cupboard: false, beds: [{ label: 'Bed 1', size: 'Double' }], towels: {} }));
+    .forEach((n) => LN.draft.rooms.push({ name: n, cupboard: false, beds: [{ label: 'Bed 1', size: lnDefaultSize() }], towels: {} }));
   lnGo('setup');
 };
 window.lnSaveSetup = async () => {

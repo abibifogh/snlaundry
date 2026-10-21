@@ -23,7 +23,6 @@ import { newId } from './auth.js';
 const K_LINEN = 'linen';
 const LOG_CAP = 5000;
 
-export const BED_SIZES = ['Single', 'Double', 'Queen', 'King'];
 export const PIECE_STATUSES = ['clean', 'in_use', 'soiled', 'washing', 'missing', 'retired'];
 export const RETIRE_REASONS = { damaged: 'Damaged', worn: 'Worn out', lost: 'Lost', charged: 'Charged to guest' };
 const CATEGORIES = ['bed', 'bath'];
@@ -45,6 +44,8 @@ export function defaultLinen() {
       { id: 'htowel', name: 'Hand towel', category: 'bath', cost: 0, washLife: 150, active: true },
       { id: 'ftowel', name: 'Floor towel', category: 'bath', cost: 0, washLife: 150, active: true },
     ],
+    // Bed sizes are the admin's own list (Setup → "What each bed takes"); each
+    // size maps to what one bed of that size takes. Key order is display order.
     bedSets: {
       Single: { dsheet: 2, pcase: 1 },
       Double: { dsheet: 2, pcase: 1 },
@@ -63,7 +64,7 @@ export async function getLinen() {
   const d = await readJSON(K_LINEN, null);
   const def = defaultLinen();
   if (!d) return def;
-  return { ...def, ...d, seq: { ...def.seq, ...(d.seq || {}) }, bedSets: { ...def.bedSets, ...(d.bedSets || {}) } };
+  return { ...def, ...d, seq: { ...def.seq, ...(d.seq || {}) }, bedSets: d.bedSets && Object.keys(d.bedSets).length ? d.bedSets : def.bedSets };
 }
 
 async function mutate(fn) {
@@ -113,11 +114,29 @@ export async function saveLinenSetup(patch = {}, actor) {
     }
     const typeIds = new Set(d.types.map((t) => t.id));
 
-    if (patch.bedSets && typeof patch.bedSets === 'object') {
+    // Bed sizes: [{ name, originalName, set }]. A rename carries every bed of
+    // that size along; a size still used by a bed can't be removed.
+    const renamed = {};
+    if (Array.isArray(patch.bedSizes)) {
+      if (!patch.bedSizes.length) throw httpError(400, 'Keep at least one bed size.');
       const sets = {};
-      BED_SIZES.forEach((size) => { sets[size] = cleanSet(patch.bedSets[size] || d.bedSets[size] || {}, typeIds); });
+      patch.bedSizes.forEach((z) => {
+        const name = String(z.name || '').trim().slice(0, 40);
+        if (!name) throw httpError(400, 'Every bed size needs a name.');
+        if (Object.keys(sets).some((k) => k.toLowerCase() === name.toLowerCase())) throw httpError(400, `Bed size "${name}" is listed twice.`);
+        sets[name] = cleanSet(z.set || {}, typeIds);
+        if (z.originalName && z.originalName !== name && d.bedSets[z.originalName]) renamed[z.originalName] = name;
+      });
       d.bedSets = sets;
+      d.rooms.forEach((r) => r.beds.forEach((b) => { if (renamed[b.size]) b.size = renamed[b.size]; }));
+    } else if (patch.bedSets && typeof patch.bedSets === 'object') {
+      Object.keys(d.bedSets).forEach((size) => { if (patch.bedSets[size]) d.bedSets[size] = cleanSet(patch.bedSets[size], typeIds); });
     }
+    const sizeOf = (size) => {
+      const z = renamed[size] || size;
+      if (!d.bedSets[z]) throw httpError(400, `"${size}" isn't one of your bed sizes. Pick a size for every bed.`);
+      return z;
+    };
 
     if (Array.isArray(patch.rooms)) {
       const names = new Set();
@@ -132,7 +151,7 @@ export async function saveLinenSetup(patch = {}, actor) {
           return {
             id: prev ? prev.id : newId('bed'),
             label: String(b.label || '').trim() || `Bed ${i + 1}`,
-            size: BED_SIZES.includes(b.size) ? b.size : 'Double',
+            size: sizeOf(b.size),
             state: prev ? prev.state : 'stripped',
             changedAt: prev ? prev.changedAt : null,
           };
@@ -173,6 +192,10 @@ export async function saveLinenSetup(patch = {}, actor) {
         delete r._from;
       }
       d.rooms = next;
+    }
+    for (const r of d.rooms) {
+      const b = r.beds.find((x) => !d.bedSets[x.size]);
+      if (b) throw httpError(400, `${r.name} ${b.label} is a ${b.size} bed. Change that bed's size before removing the "${b.size}" size.`);
     }
     addLog(d, actor, 'Setup changed', 'Rooms, items or par levels updated');
     return d;
