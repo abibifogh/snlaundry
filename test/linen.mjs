@@ -134,6 +134,23 @@ try {
   doc = (await api('GET', '/api/linen', { headers: A })).body;
   ok('retired pieces keep their reason', piece(doc, sheets[7]).status === 'retired' && piece(doc, sheets[7]).retiredReason === 'damaged' && piece(doc, cases[0]).retiredReason === 'charged');
 
+  section('Damage from staff waits for the supervisor');
+  r = await api('POST', '/api/linen/pieces', { headers: A, body: { typeId: 'btowel', qty: 2 } });
+  const towels = r.body.codes;
+  await api('POST', '/api/linen/retire', { headers: hk, body: { codes: [towels[0]], reason: 'damaged', note: 'Stain' } });
+  await api('POST', '/api/linen/retire', { headers: A, body: { codes: [towels[1]], reason: 'worn', note: 'thin' } });
+  doc = (await api('GET', '/api/linen', { headers: A })).body;
+  ok('housekeeping damage is flagged for checking', piece(doc, towels[0]).checked === false);
+  ok("an admin's own damage report is not", piece(doc, towels[1]).checked === undefined);
+  r = await api('POST', '/api/linen/check-damaged', { headers: hk, body: { code: towels[0] } });
+  ok('only managers check damage', r.status === 403);
+  r = await api('POST', '/api/linen/check-damaged', { headers: A, body: { code: towels[1] } });
+  ok('a piece not waiting to be checked is refused', r.status === 400);
+  r = await api('POST', '/api/linen/check-damaged', { headers: A, body: { code: towels[0], usable: true } });
+  doc = (await api('GET', '/api/linen', { headers: A })).body;
+  ok('"still usable" puts it back in the soiled bin', r.status === 200 && piece(doc, towels[0]).status === 'soiled' && piece(doc, towels[0]).retiredReason === null);
+  ok('every item has a colour for labels and pictures', doc.types.every((t) => /^#[0-9a-f]{6}$/i.test(t.color)));
+
   section('Restock a cupboard, count the storeroom');
   r = await api('POST', '/api/linen/move', { headers: hk, body: { codes: [sheets[6]], to: 'Duafe' } });
   ok('cannot move to a room without a cupboard', r.status === 400);
@@ -189,7 +206,7 @@ try {
 
   section('Backup includes linen');
   r = await api('GET', '/api/backup', { headers: A });
-  ok('backup carries the linen document', r.status === 200 && r.body.linen && r.body.linen.pieces.length === 11, `pieces ${r.body.linen && r.body.linen.pieces.length}`);
+  ok('backup carries the linen document', r.status === 200 && r.body.linen && r.body.linen.pieces.length === 13, `pieces ${r.body.linen && r.body.linen.pieces.length}`);
 } catch (err) {
   fail++; out.push(`\n💥 ${err.stack || err}`);
 }

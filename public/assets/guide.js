@@ -148,16 +148,18 @@ const GUIDE = {
 
     {
       id: 'linen-app',
-      title: 'Linen in the app: every piece has a label',
-      intro: 'Every sheet, pillowcase and towel has a small QR label with its own code, like L00042. Scanning the label is how the app knows where each piece is. Scan with the [[📷 Camera]] button, a handheld scanner, or type the code.',
+      title: 'Linen in the app: big pictures, just scan',
+      intro: 'Every sheet, pillowcase and towel has a small label with a QR code, a picture and a colour. Open **Linen**, tap the big picture for your job, then point the phone at each label. The screen flashes **green** with a beep when it is right, and **orange** with a buzz when it is not. Tap [[Listen]] to hear what to do.',
       steps: [
-        '**Sending to the wash.** Open **Linen → Wash** and press [[Send soiled linen to wash]]. Everything in the soiled bin is ticked; untick what you are not washing now.',
-        '**Receiving from the wash.** Press [[Receive]] on the batch and scan each piece as you fold it. Mark anything that needs another wash as **Re-wash** and anything torn or stained for good as **Damaged**. Choose where the clean linen is going, then press [[Confirm received]].',
-        '**Anything you did not scan is marked missing.** Look on the lines, in the machines and on the trolley before you confirm. If it turns up later, scan it under **Pieces** and press [[Found it]].',
-        '**Changing a bed or towels (housekeeping).** Open **Linen → Rooms** and tap the bed. What is on it comes off into the soiled bin; tap **Missing** for anything that is not there. Scan each clean piece you put on, or press [[Pick for me]] and take exactly the codes it shows. Press [[Done]].',
-        '**Damaged linen.** Press [[Report damage]], scan it and say what happened. It leaves stock and the manager sees it in the loss report.',
+        '**Change a bed (housekeeping).** Tap [[Change a bed]]. Scan the card on the room door (or tap the room), then tap the bed. Scan everything you take off, then each clean piece you put on. The pictures fill in as you go. Tap [[Done]].',
+        '**Something not on the bed?** The phone shows its picture. Look under the bed and pillows and in the bathroom. If it is not there, tap [[It is not here]]. The supervisor takes it from there.',
+        '**Fill a cupboard.** Tap [[Fill a cupboard]], scan the card in the cupboard, then scan each clean piece as you put it in. Tap [[Done]].',
+        '**Wash the dirty bin (laundry).** Put everything in the machine, then tap [[Wash the dirty bin]] and [[All in the machine]].',
+        '**Fold clean linen (laundry).** Tap [[Fold clean linen]] and scan each piece as you fold it. If a piece needs another wash, tap [[Wash again]] before you scan it; if it is damaged, tap [[Damaged]] first. Tap [[Finished folding]].',
+        '**Something not back from the wash?** Look on the line, in the machine and on the trolley. If you cannot find it, tap [[Tell the supervisor]].',
+        '**Damaged linen.** Tap [[Something is damaged]], scan it, and tap the picture: torn, stain, burn or worn thin. Put it in the **red bag**.',
       ],
-      note: 'A piece is never "probably somewhere". If the app says it is in your batch and you cannot find it, say so: it shows as missing with your batch number, and that is how lost linen gets found the same day.',
+      note: 'You never have to type or decide what happened to a missing piece. Scan what you have, tap one picture button, and carry on. The supervisor sorts out the rest.',
     },
 
     {

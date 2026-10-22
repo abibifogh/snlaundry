@@ -86,7 +86,7 @@ try {
   ok('track link populated', /\/track\?id=pub_/.test(w.document.querySelector('#trackLink').href), w.document.querySelector('#trackLink').href);
 
   out.push('\n▶ Reception app (app.js) — setup already done, so shows lock screen');
-  w = await loadPage('app.html', ['guide.js', 'app.js', 'linen.js']);
+  w = await loadPage('app.html', ['guide.js', 'app.js', 'linen.js', 'linen-simple.js']);
   ok('lock screen visible (not setup)', !w.document.querySelector('#lockScreen').classList.contains('hidden'));
   ok('PIN pad rendered', w.document.querySelectorAll('#pinpad button').length === 12);
   // keyboard PIN entry works on the lock screen
@@ -139,7 +139,7 @@ try {
   await sleep(80);
   const gv = w.document.querySelector('#view');
   ok('guide tab renders the handbook', /Laundry Handbook/.test(gv.innerHTML) && gv.querySelectorAll('.guide-sec').length >= 12, gv.querySelectorAll('.guide-sec').length + ' sections');
-  ok('guide names the real app buttons', ['Mark ready', 'Start cleaning', 'Confirm received', 'Pick for me'].every(n => [...gv.querySelectorAll('kbd.ui')].some(k => k.textContent === n)), [...gv.querySelectorAll('kbd.ui')].map(k => k.textContent).join(','));
+  ok('guide names the real app buttons', ['Mark ready', 'Start cleaning', 'Change a bed', 'Finished folding'].every(n => [...gv.querySelectorAll('kbd.ui')].some(k => k.textContent === n)), [...gv.querySelectorAll('kbd.ui')].map(k => k.textContent).join(','));
   ok('guide carries none of the old wording', !/quest|password|Start Washing|Done ☑/i.test(gv.textContent));
   ok('guide has the order flow and the who-to-ask table', !!gv.querySelector('#g-flow ol') && !!gv.querySelector('#g-limits table'));
   ok('reception/admin see the pointer note; it is not for attendants', /attendants' guide/.test(gv.innerHTML));
@@ -202,13 +202,88 @@ try {
 
   out.push('\n▶ Housekeeping sign-in');
   await handleRequest({ method: 'POST', path: '/api/cashiers', headers: H, body: { name: 'Ama', pin: '5555', role: 'housekeeping' } });
-  w = await loadPage('app.html', ['guide.js', 'app.js', 'linen.js']);
+  w = await loadPage('app.html', ['guide.js', 'app.js', 'linen.js', 'linen-simple.js']);
   ['5', '5', '5', '5', 'OK'].forEach(k => [...w.document.querySelectorAll('#pinpad button')].find(b => b.textContent === k).click());
   await sleep(150);
   const hkTabs = [...w.document.querySelectorAll('#tabs button')].map(b => b.dataset.tab).join(',');
   ok('housekeeping sees only Linen and Guide', hkTabs === 'linen,guide', hkTabs);
-  ok('housekeeping lands on the linen overview, no shift bar', /Needs attention/.test(w.document.querySelector('#view').textContent) && !/Start shift/.test(w.document.querySelector('#view').innerHTML));
-  ok('housekeeping has no Setup or Losses screens', !/lnGo\('setup'\)|Losses &amp; reorder/.test(w.document.querySelector('.ln-subnav').innerHTML));
+  const vv = () => w.document.querySelector('#view');
+  ok('housekeeping lands on the picture screen, no shift bar', /What are you doing\?/.test(vv().textContent) && !/Start shift/.test(vv().innerHTML));
+  ok('housekeeping sees Change a bed, Fill a cupboard, Damaged; not the full tab', /Change a bed/.test(vv().textContent) && /Fill a cupboard/.test(vv().textContent) && /Something is damaged/.test(vv().textContent) && !/Wash the dirty bin/.test(vv().textContent) && !w.document.querySelector('.ln-subnav'));
+
+  out.push('\n▶ Staff screens: change a bed by scanning');
+  w.lsGo('room'); await sleep(30);
+  ok('rooms show as big tiles', w.document.querySelectorAll('.ls-room').length === 1 && /Akoma/.test(vv().textContent));
+  w.lsScan('ROOM:Akoma'); await sleep(30);
+  ok('scanning the room door card opens the room', w.LS.screen === 'bed' && w.LS.room === 'Akoma' && w.document.querySelectorAll('.ls-room').length === 3, w.LS.screen);
+  w.lsPickPlace(0); await sleep(30);
+  let ld = (await handleRequest({ method: 'GET', path: '/api/linen', headers: H })).body;
+  const onBed1 = ld.pieces.filter(p => p.status === 'in_use' && p.bed === ld.rooms[0].beds[0].id).map(p => p.code);
+  ok('the bed shows what is on it as pictures', w.document.querySelectorAll('.ls-slot').length >= onBed1.length + 3 && /Take off/.test(vv().textContent));
+  w.lsScan(onBed1[0]); await sleep(10);
+  ok('a scan from the bed flashes green "Off"', /Off/.test(w.document.querySelector('.ls-flash.ok')?.textContent || ''), w.document.querySelector('#lsFlash').innerHTML.slice(0, 120));
+  const dirty = onBed1[0];
+  w.lsScan(dirty); await sleep(10);
+  ok('scanning it again flashes orange', !!w.document.querySelector('.ls-flash.no'));
+  const clean = ld.pieces.filter(p => p.status === 'clean' && p.typeId === 'dsheet').map(p => p.code);
+  const cleanPc = ld.pieces.filter(p => p.status === 'clean' && p.typeId === 'pcase').map(p => p.code);
+  w.lsScan(clean[0]); w.lsScan(clean[1]); w.lsScan(cleanPc[0]); await sleep(10);
+  ok('Done lights up once the set is scanned', !w.document.querySelector('#lsFoot .ls-big').disabled);
+  w.lsFinishBed(); await sleep(20);
+  ok('pieces not scanned off bring up one plain question', w.LS.screen === 'bedask' && /could not find/.test(vv().textContent));
+  w.lsFinishBed(true); await sleep(120);
+  ld = (await handleRequest({ method: 'GET', path: '/api/linen', headers: H })).body;
+  ok('the change is saved: old pieces soiled or missing, new ones on', ld.pieces.find(p => p.code === dirty).status === 'soiled' && onBed1.slice(1).every(c => ld.pieces.find(p => p.code === c).status === 'missing') && ld.pieces.find(p => p.code === clean[0]).status === 'in_use', JSON.stringify(onBed1.map(c => ld.pieces.find(p => p.code === c).status)));
+  ok('the done screen says the supervisor will look', w.LS.screen === 'beddone' && /supervisor/.test(vv().textContent));
+
+  out.push('\n▶ Staff screens: report damage with a picture');
+  w.lsGo('dmgscan'); await sleep(20);
+  w.lsScan(dirty); await sleep(20);
+  ok('scanning opens the picture reasons', w.LS.screen === 'dmgwhy' && w.document.querySelectorAll('.ls-reasons button').length === 4);
+  await w.lsDamage('burn'); await sleep(80);
+  ld = (await handleRequest({ method: 'GET', path: '/api/linen', headers: H })).body;
+  const burnt = ld.pieces.find(p => p.code === dirty);
+  ok('damage from staff waits for the supervisor', burnt.status === 'retired' && burnt.checked === false && burnt.note === 'Burn', JSON.stringify(burnt));
+
+  out.push('\n▶ Staff screens: laundry washes and folds');
+  // Fill the dirty bin: the two missing pieces turn up, and the bed is stripped again.
+  await handleRequest({ method: 'POST', path: '/api/linen/found', headers: H, body: { codes: onBed1.slice(1) } });
+  await handleRequest({ method: 'POST', path: '/api/linen/change', headers: H, body: { room: 'Akoma', bed: ld.rooms[0].beds[0].id, off: [clean[0], clean[1], cleanPc[0]] } });
+  await handleRequest({ method: 'POST', path: '/api/cashiers', headers: H, body: { name: 'Kojo', pin: '6666', role: 'laundry' } });
+  w = await loadPage('app.html', ['guide.js', 'app.js', 'linen.js', 'linen-simple.js']);
+  ['6', '6', '6', '6', 'OK'].forEach(k => [...w.document.querySelectorAll('#pinpad button')].find(b => b.textContent === k).click());
+  await sleep(150);
+  [...w.document.querySelectorAll('#tabs button')].find(b => b.dataset.tab === 'linen').click(); await sleep(120);
+  const v2 = () => w.document.querySelector('#view').textContent;
+  ok('laundry sees Wash the dirty bin and Fold clean linen', /Wash the dirty bin/.test(v2()) && /Fold clean linen/.test(v2()) && !/Change a bed/.test(v2()));
+  w.lsGo('wash'); await sleep(20);
+  await w.lsWashAll(); await sleep(100);
+  let l2 = (await handleRequest({ method: 'GET', path: '/api/linen', headers: H })).body;
+  const batch = l2.batches.find(b => b.status === 'washing');
+  ok('one tap sends the whole dirty bin', !!batch && l2.pieces.filter(p => p.status === 'soiled').length === 0, JSON.stringify(l2.batches));
+  w.lsOpenFold(); await sleep(20);
+  w.lsScan(batch.codes[0]); await sleep(10);
+  ok('a folded piece counts up', /1 \/ /.test(v2()));
+  w.lsMode('again'); w.lsScan(batch.codes[1]); await sleep(10);
+  await w.lsFinishFold(true); await sleep(120);
+  l2 = (await handleRequest({ method: 'GET', path: '/api/linen', headers: H })).body;
+  const st = (c) => l2.pieces.find(p => p.code === c).status;
+  ok('fold saves clean, wash-again and missing', st(batch.codes[0]) === 'clean' && st(batch.codes[1]) === 'soiled' && batch.codes.slice(2).every(c => st(c) === 'missing'), batch.codes.map(st).join(','));
+
+  out.push('\n▶ Supervisor: needs checking');
+  w = await loadPage('app.html', ['guide.js', 'app.js', 'linen.js', 'linen-simple.js']);
+  ['1', '2', '3', '4', 'OK'].forEach(k => [...w.document.querySelectorAll('#pinpad button')].find(b => b.textContent === k).click());
+  await sleep(150);
+  [...w.document.querySelectorAll('#tabs button')].find(b => b.dataset.tab === 'linen').click(); await sleep(120);
+  ok('admin sees a Needs checking count', /Needs checking\d+/.test(w.document.querySelector('.ln-subnav').textContent), w.document.querySelector('.ln-subnav').textContent);
+  w.lnGo('review'); await sleep(80);
+  const revCount = w.document.querySelectorAll('.ln-rev').length;
+  ok('the list shows the missing and damaged pieces', revCount >= 3, revCount + '');
+  await w.lnRevDamaged(dirty, true); await sleep(80);
+  l2 = (await handleRequest({ method: 'GET', path: '/api/linen', headers: H })).body;
+  ok('"Still usable" puts damage back in the soiled bin', l2.pieces.find(p => p.code === dirty).status === 'soiled' && w.document.querySelectorAll('.ln-rev').length === revCount - 1);
+  w.lnGo('staff'); await sleep(80);
+  ok('admins can open the staff screens', /What are you doing\?/.test(w.document.querySelector('#view').textContent) && /Wash the dirty bin/.test(w.document.querySelector('#view').textContent));
 } catch (err) {
   fail++; out.push(`\n💥 ${err.stack || err}`);
 }

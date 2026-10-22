@@ -392,6 +392,7 @@ async function afterAuth(auth) {
   enterApp();
 }
 function lock() {
+  if (typeof lsCamStop === 'function') lsCamStop(); // never leave the camera on behind the lock screen
   state.token = null; state.user = null; localStorage.removeItem(TOKEN_KEY);
   if (state.poll) clearInterval(state.poll);
   if (state.pingTimer) clearInterval(state.pingTimer);
