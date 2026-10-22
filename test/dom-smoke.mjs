@@ -166,6 +166,7 @@ try {
   ok('overview flags the bed that is not made up', /not made up/.test(lv.textContent));
   w.lnGo('rooms'); await sleep(80);
   ok('rooms view lists Akoma with its bed and towels', /Akoma/.test(w.document.querySelector('#lnView').textContent) && w.document.querySelectorAll('.ln-place').length === 2);
+  ok('each bed has its own Guest left button, plus Whole room checked out', w.document.querySelectorAll('.ln-gl').length === 1 && /Whole room checked out/.test(w.document.querySelector('#lnView').textContent));
   w.lnOpenChange(0, 0); await sleep(20);
   const scan = (code) => { const el = w.document.querySelector('#chgScan'); el.value = code; el.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter' })); };
   scan(added.body.codes[0].toLowerCase());

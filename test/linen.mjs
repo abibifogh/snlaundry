@@ -100,6 +100,21 @@ try {
   r = await api('POST', '/api/linen/change', { headers: hk, body: { room: 'Duafe', bed: bed1, off: [sheets[2]], keep: [sheets[2]] } });
   ok('a piece cannot both come off and stay', r.status === 400);
 
+  section('Dorm beds check out one by one');
+  doc = (await api('GET', '/api/linen', { headers: A })).body;
+  const bed2 = doc.rooms[0].beds[1];
+  r = await api('POST', '/api/linen/checkout', { headers: cs, body: { room: 'Duafe', bed: bed2.id } });
+  doc = (await api('GET', '/api/linen', { headers: A })).body;
+  ok('reception marks one bed\'s guest as gone', r.status === 200 && !!doc.rooms[0].beds[1].checkoutAt && !doc.rooms[0].beds[0].checkoutAt && !doc.rooms[0].checkoutAt);
+  r = await api('POST', '/api/linen/checkout', { headers: cs, body: { room: 'Duafe', bed: 'bed_nope' } });
+  ok('an unknown bed is refused', r.status === 404);
+  r = await api('POST', '/api/linen/checkout', { headers: hk, body: { room: 'Duafe', bed: bed2.id } });
+  ok('housekeeping cannot mark checkouts', r.status === 403);
+  const onBed2 = doc.pieces.filter((p) => p.status === 'in_use' && p.bed === bed2.id).map((p) => p.code);
+  r = await api('POST', '/api/linen/change', { headers: hk, body: { room: 'Duafe', bed: bed2.id, off: onBed2 } });
+  doc = (await api('GET', '/api/linen', { headers: A })).body;
+  ok('stripping that bed clears its guest-left mark', r.status === 200 && doc.rooms[0].beds[1].checkoutAt === null && doc.rooms[0].beds[1].state === 'stripped');
+
   section('Wash: send, receive short, resolve');
   r = await api('POST', '/api/linen/wash', { headers: hk, body: { codes: [sheets[0]] } });
   ok('housekeeping cannot send to the wash', r.status === 403);

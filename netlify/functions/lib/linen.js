@@ -53,7 +53,8 @@ export function defaultLinen() {
       Queen: { bsheet: 1, dsheet: 2, pcase: 2 },
       King: { bsheet: 1, dsheet: 2, pcase: 2 },
     },
-    rooms: [], // { name, cupboard, beds: [{ id, label, size, state, changedAt }], towels: {typeId: n}, towelsState, towelsChangedAt, checkoutAt }
+    // checkoutAt on a bed: that guest left (dorms check out bed by bed); on the room: the whole room did.
+    rooms: [], // { name, cupboard, beds: [{ id, label, size, state, changedAt, checkoutAt }], towels: {typeId: n}, towelsState, towelsChangedAt, checkoutAt }
     pieces: [], // { code, typeId, status, loc, room, bed, washes, cost, supplier, addedAt, statusAt, batchId, missingFrom, retiredReason, note }
     batches: [], // { id, number, sentAt, sentBy, codes, status, receivedAt, receivedBy, back, rewash, damaged, missing }
     log: [], // { id, at, by, role, action, detail, codes }
@@ -158,6 +159,7 @@ export async function saveLinenSetup(patch = {}, actor) {
             label: String(b.label || '').trim() || `Bed ${i + 1}`,
             size: sizeOf(b.size),
             state: prev ? prev.state : 'stripped',
+            checkoutAt: prev ? prev.checkoutAt || null : null,
             changedAt: prev ? prev.changedAt : null,
           };
         });
@@ -265,7 +267,7 @@ export async function changePlace({ room, bed = null, off = [], keep = [], on = 
     onPieces.forEach((p) => { setStatus(p, 'in_use', at); p.room = room; p.bed = bed || null; });
 
     const filled = onC.length + keepC.length > 0;
-    if (b) { b.state = filled ? 'made' : 'stripped'; if (onC.length) b.changedAt = at; }
+    if (b) { b.state = filled ? 'made' : 'stripped'; if (onC.length) b.changedAt = at; if (onC.length || offC.length) b.checkoutAt = null; }
     else { r.towelsState = filled ? 'made' : 'stripped'; if (onC.length) r.towelsChangedAt = at; }
     if (r.checkoutAt && placesOf(r).every((pl) => pl.changedAt && pl.changedAt >= r.checkoutAt)) r.checkoutAt = null;
 
@@ -278,12 +280,20 @@ export async function changePlace({ room, bed = null, off = [], keep = [], on = 
   });
 }
 
-export async function markCheckout({ room } = {}, actor) {
+// With a bed: that one guest left (a dorm bed). Without: the whole room.
+export async function markCheckout({ room, bed = null } = {}, actor) {
   return mutate((d) => {
     const r = d.rooms.find((x) => x.name === room);
     if (!r) throw httpError(404, 'Room not found.');
-    r.checkoutAt = nowIso();
-    addLog(d, actor, `Checked out ${room}`, 'Beds and towels due a change');
+    if (bed) {
+      const b = r.beds.find((x) => x.id === bed);
+      if (!b) throw httpError(404, 'Bed not found.');
+      b.checkoutAt = nowIso();
+      addLog(d, actor, `Guest left ${room} ${b.label}`, 'Bed due a change');
+    } else {
+      r.checkoutAt = nowIso();
+      addLog(d, actor, `Checked out ${room}`, 'Beds and towels due a change');
+    }
     return { ok: true };
   });
 }

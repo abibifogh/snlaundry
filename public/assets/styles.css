@@ -381,3 +381,8 @@ kbd.ui { display: inline-block; font: inherit; font-size: .92em; font-weight: 60
 .ln-rev { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; gap: 12px; align-items: center; }
 .ln-rev-acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 @media (max-width: 640px) { .ln-rev { grid-template-columns: 56px minmax(0, 1fr); } .ln-rev-acts { grid-column: 1 / -1; justify-content: flex-start; } .ls-screen { border-radius: 16px; } }
+.ln-pl-wrap { display: grid; gap: 4px; align-content: start; }
+.ln-gl { background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font-size: 12.5px; font-weight: 600; }
+.ln-gl:hover { background: var(--hover); border-color: var(--warn); }
+.ln-gl-done { display: block; text-align: center; background: #fef3c7; color: #92400e; border-color: #fde68a; }
+.ln-places { align-items: start; }

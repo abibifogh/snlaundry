@@ -349,7 +349,8 @@ const LS_SCREENS = {
         <div class="ls-rooms">${LN.doc.rooms.map((r, i) => {
           const pls = lnPlaces().filter((pl) => pl.room === r);
           const due = pls.filter(lnPlaceDue);
-          const flag = r.checkoutAt ? 'Guest left' : due.length ? `${due.length} to do` : '';
+          const gone = pls.filter((pl) => lnPlaceDue(pl) === 'checkout').length;
+          const flag = gone ? `Guest left · ${gone}` : due.length ? `${due.length} to do` : '';
           return `<button class="ls-room ${flag ? 'due' : ''}" onclick="lsPickRoom(${i})"><span class="sw" style="background:${lsRoomColor(r.name)}"></span><b>${esc(r.name)}</b>${flag ? `<span class="flag">● ${flag}</span>` : `<span class="sub">${r.beds.length} bed${r.beds.length === 1 ? '' : 's'}</span>`}</button>`;
         }).join('') || '<p>No rooms yet. Ask the supervisor.</p>'}</div>`,
       foot: lsTypeLink,

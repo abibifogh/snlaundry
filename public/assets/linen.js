@@ -110,14 +110,16 @@ function lnWhere(p) {
 function lnPlaces() {
   const out = [];
   LN.doc.rooms.forEach((r, ri) => {
-    r.beds.forEach((b, bi) => out.push({ ri, bi, room: r, label: b.label, kind: 'bed', size: b.size, set: LN.doc.bedSets[b.size] || {}, state: b.state, changedAt: b.changedAt, bedId: b.id }));
+    r.beds.forEach((b, bi) => out.push({ ri, bi, room: r, label: b.label, kind: 'bed', size: b.size, set: LN.doc.bedSets[b.size] || {}, state: b.state, changedAt: b.changedAt, checkoutAt: b.checkoutAt || null, bedId: b.id }));
     if (Object.keys(r.towels || {}).length) out.push({ ri, bi: -1, room: r, label: 'Towels', kind: 'bath', set: r.towels, state: r.towelsState, changedAt: r.towelsChangedAt, bedId: null });
   });
   return out;
 }
 function lnPlaceDue(pl) {
+  // A guest leaving comes first: the bed may already be stripped, but it still needs the guest-left change.
+  const out = [pl.checkoutAt, pl.room.checkoutAt].filter(Boolean).sort().pop();
+  if (out && (!pl.changedAt || pl.changedAt < out)) return 'checkout';
   if (pl.state !== 'made') return 'stripped';
-  if (pl.room.checkoutAt && (!pl.changedAt || pl.changedAt < pl.room.checkoutAt)) return 'checkout';
   const limit = pl.kind === 'bath' ? LN.doc.towelChangeDays : LN.doc.bedChangeDays;
   const d = lnDays(pl.changedAt);
   if (d != null && d >= limit) return 'old';
@@ -419,8 +421,8 @@ function lnAlerts() {
   if (dmgToCheck.length && can('linenManage')) a.push({ level: 'warn', title: `${dmgToCheck.length} damaged piece(s) to check`, text: 'Reported by staff. Confirm, or put back in use.', action: "lnGo('review')", label: 'Check them' });
   d.batches.filter((b) => b.status === 'washing' && lnHours(b.sentAt) >= d.washAlertHours).forEach((b) =>
     a.push({ level: 'warn', title: `${b.number} has been in the wash ${Math.floor(lnHours(b.sentAt))} hours`, text: `${b.codes.length} pieces sent ${fmt(b.sentAt)} by ${b.sentBy}.`, action: can('linenWash') ? `lnOpenReceive('${b.id}')` : '', label: 'Receive' }));
-  const checkouts = d.rooms.filter((r) => r.checkoutAt);
-  if (checkouts.length) a.push({ level: 'warn', title: `Checked out: ${checkouts.map((r) => r.name).join(', ')}`, text: 'Change the beds and towels in these rooms.', action: "lnRoomsFilter('checkout')", label: 'Open rooms' });
+  const left = places.filter((pl) => lnPlaceDue(pl) === 'checkout');
+  if (left.length) a.push({ level: 'warn', title: `Guests left: ${left.length} bed(s)/bathroom(s) to change`, text: left.slice(0, 8).map((pl) => `${pl.room.name} ${pl.label}`).join(', ') + (left.length > 8 ? '…' : ''), action: "lnRoomsFilter('checkout')", label: 'Open rooms' });
   const stripped = places.filter((pl) => pl.state !== 'made');
   if (stripped.length) a.push({ level: 'warn', title: `${stripped.length} bed(s)/bathroom(s) not made up`, text: stripped.slice(0, 6).map((pl) => `${pl.room.name} ${pl.label}`).join(', ') + (stripped.length > 6 ? '…' : ''), action: "lnRoomsFilter('due')", label: 'Open rooms' });
   const old = places.filter((pl) => lnPlaceDue(pl) === 'old');
@@ -442,31 +444,38 @@ function lnRooms(v) {
   const places = lnPlaces();
   const clean = (room) => d.pieces.filter((p) => p.status === 'clean' && p.loc === room).length;
   v.innerHTML = `
-    <div class="ln-head"><div><h2>Rooms</h2><p class="hint">${can('linenUse') ? 'Tap a bed or towels to change them.' : 'Mark a room checked out and housekeeping sees it straight away.'}</p></div>
+    <div class="ln-head"><div><h2>Rooms</h2><p class="hint">${[can('linenUse') ? 'Tap a bed or towels to change them.' : '', can('linenCheckout') ? 'When a guest leaves, tap <b>Guest left</b> under their bed (or <b>Whole room checked out</b> for a private room). Housekeeping sees it straight away.' : ''].filter(Boolean).join(' ')}</p></div>
       <div class="ln-filters">${[['all', 'All'], ['due', 'Due a change'], ['checkout', 'Checked out']].map(([k, l]) => `<button class="small ${f === k ? '' : 'secondary'}" onclick="lnRoomsFilter('${k}')">${l}</button>`).join('')}</div></div>
     <div class="ln-rooms">${d.rooms.map((r, ri) => {
       let pls = places.filter((pl) => pl.ri === ri);
       if (f === 'due') pls = pls.filter(lnPlaceDue);
-      if (f === 'checkout' && !r.checkoutAt) return '';
+      if (f === 'checkout') pls = pls.filter((pl) => lnPlaceDue(pl) === 'checkout');
       if (!pls.length && f !== 'all') return '';
       return `<div class="ln-room">
-        <div class="ln-room-h"><b>${esc(r.name)}</b>${r.checkoutAt ? `<span class="ln-tag ln-amber">Checked out ${fmt(r.checkoutAt)}</span>` : ''}</div>
+        <div class="ln-room-h"><b>${esc(r.name)}</b>${(() => { const n = places.filter((pl) => pl.ri === ri && lnPlaceDue(pl) === 'checkout').length; return n ? `<span class="ln-tag ln-amber">Guest left · ${n} to change</span>` : ''; })()}</div>
         <div class="muted" style="font-size:12px;margin:2px 0 8px">${r.beds.length} bed(s)${r.cupboard ? ` · cupboard: ${clean(r.name)} clean` : ''}</div>
         <div class="ln-places">${pls.map((pl) => {
           const due = lnPlaceDue(pl);
           const cls = due === 'stripped' ? 'ln-pl-bad' : due ? 'ln-pl-due' : '';
-          const st = due === 'stripped' ? 'Not made up' : due === 'checkout' ? 'Checkout: change' : pl.changedAt ? (lnDays(pl.changedAt) === 0 ? 'Changed today' : `${lnDays(pl.changedAt)} day(s) ago`) : 'Made';
-          return `<button class="ln-place ${cls}" onclick="lnOpenChange(${pl.ri},${pl.bi})" ${can('linenUse') ? '' : 'disabled'}><b>${esc(pl.label)}</b><span>${pl.kind === 'bed' ? esc(pl.size) + ' · ' : ''}${st}</span></button>`;
+          const st = due === 'stripped' ? 'Not made up' : due === 'checkout' ? 'Guest left: change' : pl.changedAt ? (lnDays(pl.changedAt) === 0 ? 'Changed today' : `${lnDays(pl.changedAt)} day(s) ago`) : 'Made';
+          const tile = `<button class="ln-place ${cls}" onclick="lnOpenChange(${pl.ri},${pl.bi})" ${can('linenUse') ? '' : 'disabled'}><b>${esc(pl.label)}</b><span>${pl.kind === 'bed' ? esc(pl.size) + ' · ' : ''}${st}</span></button>`;
+          // Reception marks each bed's guest as gone: dorms check out bed by bed.
+          const gl = !can('linenCheckout') || pl.kind !== 'bed' ? ''
+            : due === 'checkout' ? '<span class="ln-gl ln-gl-done">Guest left ✓</span>'
+            : `<button class="ln-gl" onclick="lnCheckout(${pl.ri},${pl.bi})">Guest left</button>`;
+          return gl ? `<div class="ln-pl-wrap">${tile}${gl}</div>` : tile;
         }).join('')}</div>
-        ${can('linenCheckout') && !r.checkoutAt ? `<button class="small secondary" style="margin-top:10px" onclick="lnCheckout(${ri})">Mark checked out</button>` : ''}
+        ${can('linenCheckout') && places.some((pl) => pl.ri === ri && lnPlaceDue(pl) !== 'checkout') ? `<button class="small secondary" style="margin-top:10px" onclick="lnCheckout(${ri})">Whole room checked out</button>` : ''}
       </div>`;
     }).join('') || '<p class="muted">Nothing here.</p>'}</div>
-    <div class="ln-legend"><span><i style="background:#fdf1e1;border:1px solid var(--warn)"></i>Due: checkout or ${d.bedChangeDays}+ days (towels ${d.towelChangeDays}+)</span><span><i style="background:#fdeaea;border:1px solid var(--danger)"></i>Not made up</span></div>`;
+    <div class="ln-legend"><span><i style="background:#fdf1e1;border:1px solid var(--warn)"></i>Due: guest left, or ${d.bedChangeDays}+ days (towels ${d.towelChangeDays}+)</span><span><i style="background:#fdeaea;border:1px solid var(--danger)"></i>Not made up</span></div>`;
 }
-window.lnCheckout = async (ri) => {
+window.lnCheckout = async (ri, bi) => {
   const r = LN.doc.rooms[ri];
-  if (!confirm(`Mark ${r.name} as checked out? Housekeeping will see its beds and towels as due a change.`)) return;
-  try { await api('POST', '/linen/checkout', { room: r.name }); await lnReload(); } catch (e) { alert(e.message); }
+  const b = bi != null && bi >= 0 ? r.beds[bi] : null;
+  const what = b ? `${r.name} ${b.label}: the guest left? Housekeeping will see this bed as due a change.` : `Whole room ${r.name} checked out? Housekeeping will see all its beds and towels as due a change.`;
+  if (!confirm(what)) return;
+  try { await api('POST', '/linen/checkout', { room: r.name, bed: b ? b.id : null }); await lnReload(); } catch (e) { alert(e.message); }
 };
 
 // Change a bed (bi ≥ 0) or a room's towels (bi = -1).
