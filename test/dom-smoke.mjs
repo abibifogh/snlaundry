@@ -230,6 +230,17 @@ try {
   const cleanPc = ld.pieces.filter(p => p.status === 'clean' && p.typeId === 'pcase').map(p => p.code);
   w.lsScan(clean[0]); w.lsScan(clean[1]); w.lsScan(cleanPc[0]); await sleep(10);
   ok('Done lights up once the set is scanned', !w.document.querySelector('#lsFoot .ls-big').disabled);
+  w.lsType(); await sleep(20);
+  ok('Type the number opens a number pad that suggests what is on this bed first', w.document.querySelector('#lsTypeIn').getAttribute('inputmode') === 'numeric' && w.document.querySelectorAll('.ls-type-row').length >= 1 && w.document.querySelector('.ls-type-row').getAttribute('onclick').includes(onBed1[1]), w.document.querySelector('#lsTypeList').innerHTML.slice(0, 200));
+  const typed = String(Number(onBed1[1].slice(1)));
+  const tin = w.document.querySelector('#lsTypeIn'); tin.value = typed; tin.dispatchEvent(new w.Event('input'));
+  ok('typing just the number lists that piece first', w.document.querySelector('.ls-type-row').getAttribute('onclick').includes(onBed1[1]) && /No\. \d+/.test(w.document.querySelector('.ls-type-row').textContent));
+  tin.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter' })); await sleep(10);
+  ok('Enter on an exact number scans it and closes the pad', w.LS.off.includes(onBed1[1]) && !w.document.querySelector('#lsTypeBox'));
+  w.LS.off = w.LS.off.filter(c => c !== onBed1[1]); w.lsDraw();
+  w.lsScan(String(Number(onBed1[1].slice(1)))); await sleep(10);
+  ok('a scanner or typed "42" also works without the L and zeros', w.LS.off.includes(onBed1[1]));
+  w.LS.off = w.LS.off.filter(c => c !== onBed1[1]); w.lsDraw();
   w.lsFinishBed(); await sleep(20);
   ok('pieces not scanned off bring up one plain question', w.LS.screen === 'bedask' && /could not find/.test(vv().textContent));
   w.lsFinishBed(true); await sleep(120);

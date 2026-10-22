@@ -494,7 +494,7 @@ export async function stockCount({ loc, codes, note = '' } = {}, actor) {
 
 export async function pieceHistory(code) {
   const d = await getLinen();
-  const c = String(code || '').trim().toUpperCase();
+  const c = normCode(code);
   const p = d.pieces.find((x) => x.code === c);
   if (!p) throw httpError(404, `No piece with code ${c}.`);
   return { piece: p, history: d.log.filter((l) => (l.codes || []).includes(c)).slice(-100).reverse() };
@@ -542,8 +542,14 @@ function pieceOr404(d, code) {
   if (!p) throw httpError(404, `No piece with code ${code}.`);
   return p;
 }
+// "42", "l42" and "L00042" all mean piece L00042.
+export function normCode(c) {
+  const s = String(c || '').trim().toUpperCase();
+  const m = s.match(/^L?0*(\d+)$/);
+  return m ? 'L' + m[1].padStart(5, '0') : s;
+}
 function codesOf(list) {
-  return [...new Set((Array.isArray(list) ? list : []).map((c) => String(c || '').trim().toUpperCase()).filter(Boolean))];
+  return [...new Set((Array.isArray(list) ? list : []).map(normCode).filter(Boolean))];
 }
 function cleanSet(set, typeIds) {
   const out = {};

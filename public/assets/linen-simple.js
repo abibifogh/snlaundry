@@ -63,6 +63,7 @@ window.lsHome = lsHome;
 
 function lsDraw() {
   if (!document.getElementById('lsScreen')) return;
+  lsTypeClose();
   const s = (LS_SCREENS[LS.screen] || LS_SCREENS.home)();
   $('#lsTop').innerHTML = s.top || '';
   $('#lsBody').innerHTML = s.body || '';
@@ -157,10 +158,56 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { if (_lsKeys.length >= 4) { e.preventDefault(); lsScan(_lsKeys); } _lsKeys = ''; return; }
   if (e.key.length === 1) _lsKeys += e.key;
 });
+// No camera or scanner to hand: type just the number on the label. Matching
+// pieces show as you type, the ones that fit this job first; one tap picks it.
 window.lsType = () => {
-  const v = prompt('Type the code on the label (for example L00042)');
-  if (v) lsScan(v);
+  let box = document.getElementById('lsTypeBox');
+  if (!box) { box = document.createElement('div'); box.id = 'lsTypeBox'; $('#lsScreen').appendChild(box); }
+  box.innerHTML = `<div class="ls-type">
+    <div class="ls-type-h"><b>Type the number on the label</b><button class="ls-back" onclick="lsTypeClose()" aria-label="Close">${LS_ICON.cross.replace(/stroke="#fff"/, 'stroke="currentColor"').replace(/width="56" height="56"/, 'width="22" height="22"')}</button></div>
+    <input id="lsTypeIn" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="e.g. 42" aria-label="Number on the label">
+    <div id="lsTypeList" class="ls-type-list"></div></div>`;
+  const inp = $('#lsTypeIn');
+  inp.oninput = () => { inp.value = inp.value.replace(/[^0-9]/g, ''); lsTypeList(inp.value); };
+  inp.onkeydown = (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const first = lsSuggest(inp.value)[0];
+    if (first && Number(first.code.slice(1)) === Number(inp.value)) lsTypePick(first.code);
+  };
+  lsTypeList('');
+  setTimeout(() => inp.focus(), 30);
 };
+window.lsTypeClose = () => { const b = document.getElementById('lsTypeBox'); if (b) b.remove(); };
+window.lsTypePick = (code) => { lsTypeClose(); lsScan(code); };
+// How likely a piece is to be the one meant, on this screen (lower is likelier).
+function lsRank(p) {
+  if (p.status === 'retired') return 9;
+  if (LS.screen === 'bedscan') {
+    if (lsOnPlace().some((x) => x.code === p.code)) return LS.off.includes(p.code) ? 8 : 0;
+    if (LS.on.includes(p.code)) return 8;
+    if (p.status === 'clean') return lsNeedList().includes(p.typeId) ? 1 : 3;
+    return 5;
+  }
+  if (LS.screen === 'cupscan') return LS.on.includes(p.code) ? 8 : p.status === 'clean' && p.loc !== LS.room ? (lsCupNeed()[p.typeId] ? 0 : 2) : 5;
+  if (LS.screen === 'fold') { const b = lsBatch(); return b && b.codes.includes(p.code) ? (LS.folded[p.code] ? 8 : 0) : 5; }
+  return p.status === 'washing' ? 5 : 1;
+}
+function lsSuggest(digits) {
+  const want = digits ? Number(digits) : null;
+  return LN.doc.pieces
+    .map((p) => ({ p, n: Number(p.code.slice(1)), r: lsRank(p) }))
+    .filter((x) => x.r < 8 && (!digits || String(x.n).startsWith(digits)))
+    .sort((a, b) => (b.n === want) - (a.n === want) || a.r - b.r || a.n - b.n)
+    .slice(0, digits ? 6 : 5).map((x) => x.p);
+}
+function lsTypeList(digits) {
+  const list = lsSuggest(digits);
+  $('#lsTypeList').innerHTML = (digits ? '' : '<p class="ls-type-hint">Or tap one:</p>') + (list.map((p) => `
+    <button class="ls-type-row" onclick="lsTypePick('${p.code}')">${lnPic(p.typeId, 44)}
+      <span><b>${esc(lnTypeName(p.typeId))}</b><span class="cd">${p.code.replace(/^L0*/, 'No. ')}</span><small>${esc(LN_STATUS[p.status][0])} · ${esc(lnWhere(p))}</small></span></button>`).join('')
+    || `<p class="ls-type-hint">No piece has number ${esc(digits)}. Check the label.</p>`);
+}
 
 // --------------------------------------------------------------- scanning ---
 function lsScan(raw) {
@@ -168,9 +215,7 @@ function lsScan(raw) {
   const text = String(raw || '').trim();
   const room = text.match(/^ROOM:(.+)$/i);
   if (room) return lsScanRoom(room[1].trim());
-  const m = text.toUpperCase().match(/L\d{5,}/);
-  const code = m ? m[0] : text.toUpperCase();
-  const p = lnPiece(code);
+  const p = lnPiece(lnCode(text));
   if (!p) return lsFlash(false, null, 'Not one of ours', 'This label is not in the system. Give it to the supervisor.');
   const fn = LS_ON_SCAN[LS.screen];
   if (!fn) return lsFlash(false, p.typeId, lnTypeName(p.typeId), 'Choose a job first.');
@@ -321,7 +366,7 @@ window.lsPickPlace = (i) => { const pl = lnPlaces().filter((x) => x.room.name ==
 window.lsOpenFold = () => { lsLoadFold(); lsGo('fold', { mode: 'clean' }); };
 
 // ----------------------------------------------------------------- screens ---
-const lsTypeLink = '<button class="ls-link" onclick="lsType()">Type a code</button>';
+const lsTypeLink = '<button class="ls-link" onclick="lsType()">Type the number</button>';
 const LS_SCREENS = {
   home() {
     const tiles = [];
@@ -350,7 +395,6 @@ const LS_SCREENS = {
           const flag = gone ? `Guest left · ${gone}` : due.length ? `${due.length} to do` : '';
           return `<button class="ls-room ${flag ? 'due' : ''}" onclick="lsPickRoom(${i})"><span class="sw" style="background:${lsRoomColor(r.name)}"></span><b>${esc(r.name)}</b>${flag ? `<span class="flag">● ${flag}</span>` : `<span class="sub">${r.beds.length} bed${r.beds.length === 1 ? '' : 's'}</span>`}</button>`;
         }).join('') || '<p>No rooms yet. Ask the supervisor.</p>'}</div>`,
-      foot: lsTypeLink,
     };
   },
   bed() {
@@ -408,7 +452,7 @@ const LS_SCREENS = {
       body: any ? `${lsListen('Scan the card in the cupboard, or tap the room.')}
         <div class="ls-rooms">${LN.doc.rooms.map((r, i) => `<button class="ls-room" onclick="lsPickRoom(${i},true)" ${r.cupboard ? '' : 'disabled'}><span class="sw" style="background:${lsRoomColor(r.name)}"></span><b>${esc(r.name)}</b><span class="sub">${r.cupboard ? 'Cupboard' : 'No cupboard yet'}</span></button>`).join('')}</div>`
         : '<p class="ls-say">No room has a cupboard yet.</p><p class="ls-p">Clean linen stays in the storeroom for now.</p>',
-      foot: any ? lsTypeLink : '',
+
     };
   },
   cupscan() {

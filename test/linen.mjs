@@ -179,6 +179,13 @@ try {
   r = await api('POST', '/api/linen/count', { headers: hk, body: { loc: 'store', codes: [sheets[7]], note: 'x' } });
   ok('a retired piece scanned in a count is flagged', r.status === 400 && /out of stock/.test(r.body.error));
 
+  section('Just the number works');
+  r = await api('GET', '/api/linen/piece/3', { headers: hk });
+  ok('"3" finds L00003', r.status === 200 && r.body.piece.code === 'L00003', JSON.stringify(r.body).slice(0, 120));
+  r = await api('POST', '/api/linen/move', { headers: hk, body: { codes: ['10'], to: 'Akoma' } });
+  ok('moves and scans accept the number alone', r.status === 200 || r.status === 400, JSON.stringify(r.body));
+  ok('…and it was read as L00010', r.status === 200 || !/No piece/.test(r.body.error || ''));
+
   section('Piece history');
   r = await api('GET', `/api/linen/piece/${sheets[0].toLowerCase()}`, { headers: hk });
   ok('lookup is case-insensitive and lists the moves', r.status === 200 && r.body.piece.code === sheets[0] && r.body.history.length >= 4, JSON.stringify(r.body).slice(0, 300));

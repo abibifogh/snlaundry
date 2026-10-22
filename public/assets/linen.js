@@ -175,7 +175,7 @@ function lnTypesInUse() {
 }
 
 // --------------------------------------------------------------- scanning ---
-function lnScanField(id, placeholder = 'Scan or type a code, then Enter') {
+function lnScanField(id, placeholder = 'Scan, or type the number and press Enter') {
   return `<div class="ln-scan"><input id="${id}" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="${placeholder}">
     <button type="button" class="secondary small" onclick="lnCamera('${id}')">📷 Camera</button></div><div id="${id}Msg" class="ln-scanmsg"></div>`;
 }
@@ -192,10 +192,17 @@ function lnBindScan(id, handler) {
   // Keep the field ready for a handheld scanner, but don't pop the phone keyboard.
   if (!_lnCam && !(window.matchMedia && matchMedia('(pointer: coarse)').matches)) setTimeout(() => el.focus(), 30);
 }
+// A label's code from whatever was scanned or typed: a QR may hold text around
+// the code, and people type just the number ("42" means L00042).
+function lnCode(text) {
+  const s = String(text || '').trim().toUpperCase();
+  const m = s.match(/L\d{5,}/);
+  if (m) return m[0];
+  const n = s.match(/^L?0*(\d+)$/);
+  return n ? 'L' + n[1].padStart(5, '0') : s;
+}
 function lnHandleCode(id, code) {
-  // A QR may hold a URL or text around the code; take the code out of it.
-  const m = String(code).toUpperCase().match(/L\d{5,}/);
-  const c = m ? m[0] : String(code).toUpperCase();
+  const c = lnCode(code);
   let res;
   try { res = LN.scan[id](c); } catch (e) { res = { err: e.message }; }
   const msg = document.getElementById(id + 'Msg'); // after the handler: it may have redrawn the modal
@@ -285,33 +292,66 @@ window.lnCameraStop = () => {
 
 // ----------------------------------------------------------------- labels ---
 // Opens a printable sheet of QR labels: code, item and property name.
+// ------------------------------------------------------- printed material ---
+// Labels and door cards follow the somewhere nice brand manual: sandy cream
+// (#FFF8ED) and logo brown (#5d3f15), Prata for headlines, Roboto for text, the
+// cream ribbon with a notched end, and the logo itself never recoloured or
+// printed under 2.5 cm across (so it goes on door cards, not the small labels).
+const LN_BRAND = { sandy: '#FFF8ED', brown: '#5d3f15', rule: '#eadcc3', grey: '#4B4B4B', ink: '#262626', light: '#F6F6F6' };
+function lnQr(text, px) {
+  if (!window.QRCode) return '';
+  const tmp = document.createElement('div');
+  new QRCode(tmp, { text, width: px, height: px, colorDark: LN_BRAND.brown, colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M });
+  const cvs = tmp.querySelector('canvas');
+  return cvs ? cvs.toDataURL('image/png') : '';
+}
+function lnPrintWindow(title, css, note, body) {
+  const w = window.open('', '_blank');
+  if (!w) { alert('Allow pop-ups for this site to print.'); return; }
+  const b = LN_BRAND;
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Prata&family=Roboto:wght@300;400;500&display=swap">
+  <style>
+    @page { margin: 8mm; }
+    * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body { margin: 0; font-family: Roboto, "Helvetica Neue", Arial, sans-serif; font-weight: 300; color: ${b.ink}; }
+    .prata { font-family: Prata, Georgia, "Times New Roman", serif; font-weight: 400; }
+    .note { font-size: 10pt; color: ${b.grey}; margin: 0 0 6mm; }
+    .note b { font-family: Prata, Georgia, serif; font-weight: 400; font-size: 14pt; color: ${b.ink}; display: block; margin-bottom: 1mm; }
+    @media print { .note { display: none; } }
+    ${css}
+  </style></head><body><div class="note">${note}</div>${body}
+  <script>window.onload=function(){(document.fonts&&document.fonts.ready?document.fonts.ready:Promise.resolve()).then(function(){setTimeout(function(){window.print()},300)})}<\/script></body></html>`);
+  w.document.close();
+}
+
+// Linen labels: the number big (what staff type), the item's picture and colour,
+// the QR, and the hostel's name in Prata.
 function lnPrintLabels(codes) {
   if (!codes.length) return;
-  const w = window.open('', '_blank');
-  if (!w) return alert('Allow pop-ups for this site to print labels.');
-  const tmp = document.createElement('div');
+  const name = state.settings?.hostelName || '';
   const labels = codes.map((c) => {
     const p = lnPiece(c);
-    let src = '';
-    if (window.QRCode) {
-      tmp.innerHTML = '';
-      new QRCode(tmp, { text: c, width: 160, height: 160, correctLevel: QRCode.CorrectLevel.M });
-      const cvs = tmp.querySelector('canvas');
-      src = cvs ? cvs.toDataURL('image/png') : '';
-    }
-    return `<div class="l" style="border-left:3mm solid ${p ? lnColor(p.typeId) : '#999'}"><img src="${src}" alt=""><div><b>${c}</b><span>${p ? lnPic(p.typeId, 22) : ''} ${esc(p ? lnTypeName(p.typeId) : '')}</span><small>${esc(state.settings?.hostelName || '')}</small></div></div>`;
+    const col = p ? lnColor(p.typeId) : LN_BRAND.grey;
+    return `<div class="l" style="--item:${col}">
+      <img class="qr" src="${lnQr(c, 200)}" alt="">
+      <div class="t"><div class="no">No. ${Number(c.slice(1))}</div>
+        <div class="it">${p ? lnPic(p.typeId, 20) : ''}<span>${esc(p ? lnTypeName(p.typeId) : '')}</span></div>
+        <div class="ft"><span class="prata">${esc(name)}</span><span class="cd">${c}</span></div></div></div>`;
   }).join('');
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Linen labels</title><style>
-    body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:8mm}
-    .g{display:grid;grid-template-columns:repeat(3,1fr);gap:4mm}
-    .l{display:flex;gap:3mm;align-items:center;border:1px dashed #bbb;border-radius:2mm;padding:2.5mm;break-inside:avoid}
-    .l img{width:22mm;height:22mm}
-    .l b{display:block;font-size:15pt;letter-spacing:.5pt;font-family:ui-monospace,Menlo,monospace}
-    .l span{display:flex;align-items:center;gap:1mm;font-size:9pt}.l small{display:block;font-size:7pt;color:#666}
-    p{font-size:10pt;color:#555}@media print{p{display:none}}
-  </style></head><body><p>${codes.length} label(s). Print on sticker paper, or on paper and sew/iron into a corner of each piece. Use wash-proof labels for linen.</p>
-  <div class="g">${labels}</div><script>setTimeout(function(){window.print()},400)<\/script></body></html>`);
-  w.document.close();
+  const b = LN_BRAND;
+  lnPrintWindow('Linen labels', `
+    .g { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4mm; }
+    .l { display: grid; grid-template-columns: 22mm 1fr; gap: 3mm; align-items: center; background: ${b.sandy}; border: .3mm solid ${b.rule}; border-left: 3mm solid var(--item); border-radius: 2mm; padding: 2.5mm 3mm; break-inside: avoid; }
+    .qr { width: 22mm; height: 22mm; background: #fff; padding: .8mm; border-radius: 1mm; display: block; }
+    .t { min-width: 0; }
+    .no { font-weight: 500; font-size: 17pt; line-height: 1.05; color: ${b.ink}; letter-spacing: .2pt; }
+    .it { display: flex; align-items: center; gap: 1.2mm; font-weight: 400; font-size: 9pt; color: #323232; margin-top: .6mm; }
+    .ft { display: flex; justify-content: space-between; align-items: baseline; gap: 2mm; margin-top: 1.2mm; padding-top: 1mm; border-top: .3mm solid ${b.rule}; }
+    .ft .prata { font-size: 8pt; color: ${b.brown}; white-space: nowrap; }
+    .ft .cd { font-size: 6.5pt; color: ${b.grey}; }
+  `, `<b>Linen labels</b>${codes.length} label(s). Print on wash-proof label stock, or on fabric labels to sew or iron into a corner of each piece.`,
+  `<div class="g">${labels}</div>`);
 }
 window.lnPrintCodes = (codes) => lnPrintLabels(codes);
 
@@ -320,27 +360,30 @@ window.lnPrintCodes = (codes) => lnPrintLabels(codes);
 window.lnPrintRoomCards = () => {
   const rooms = LN.doc.rooms;
   if (!rooms.length) return alert('Add rooms first.');
-  const w = window.open('', '_blank');
-  if (!w) return alert('Allow pop-ups for this site to print room cards.');
-  const tmp = document.createElement('div');
-  const cards = rooms.map((r) => {
-    let src = '';
-    if (window.QRCode) {
-      tmp.innerHTML = '';
-      new QRCode(tmp, { text: 'ROOM:' + r.name, width: 240, height: 240, correctLevel: QRCode.CorrectLevel.M });
-      const cvs = tmp.querySelector('canvas'); src = cvs ? cvs.toDataURL('image/png') : '';
-    }
-    return `<div class="c"><img src="${src}" alt=""><b>${esc(r.name)}</b><span>Scan to open this room</span></div>`;
-  }).join('');
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Room cards</title><style>
-    body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:10mm}
-    .g{display:grid;grid-template-columns:repeat(2,1fr);gap:8mm}
-    .c{border:1px dashed #bbb;border-radius:4mm;padding:6mm;text-align:center;break-inside:avoid}
-    .c img{width:50mm;height:50mm}.c b{display:block;font-size:24pt;margin-top:3mm}.c span{font-size:11pt;color:#555}
-    p{font-size:10pt;color:#555}@media print{p{display:none}}
-  </style></head><body><p>Stick one on each room door, and one inside each linen cupboard.</p><div class="g">${cards}</div>
-  <script>setTimeout(function(){window.print()},400)<\/script></body></html>`);
-  w.document.close();
+  const logo = state.settings?.logoDataUrl || '';
+  const name = state.settings?.hostelName || '';
+  const cards = rooms.map((r) => `<div class="c">
+      <div class="top">${logo ? `<img class="logo" src="${logo}" alt="${esc(name)}">` : `<div class="word prata">${esc(name)}</div>`}</div>
+      <div class="rib prata">${esc(r.name)}</div>
+      <img class="qr" src="${lnQr('ROOM:' + r.name, 320)}" alt="">
+      <div class="how">Housekeeping: scan to open this room</div>
+      <div class="foot"><span>${r.beds.length} bed${r.beds.length === 1 ? '' : 's'}${r.cupboard ? ' · linen cupboard' : ''}</span><span class="prata">${esc(name)}</span></div>
+    </div>`).join('');
+  const b = LN_BRAND;
+  lnPrintWindow('Room door cards', `
+    .g { display: flex; flex-wrap: wrap; gap: 6mm; }
+    .c { width: calc(50% - 3mm); background: #fff; border: .4mm solid ${b.rule}; border-radius: 4mm; padding: 6mm 0 5mm; text-align: center; break-inside: avoid; display: flex; flex-direction: column; align-items: center; gap: 4mm; overflow: hidden; }
+    .top { height: 30mm; display: flex; align-items: center; justify-content: center; }
+    .logo { width: 30mm; height: 30mm; object-fit: contain; } /* manual: never under 2.5 cm */
+    .word { font-size: 18pt; color: ${b.brown}; }
+    .rib { align-self: flex-start; background: ${b.sandy}; color: ${b.ink}; font-size: 24pt; line-height: 1.1; padding: 3mm 14mm 3mm 10mm; border-top: .5mm solid ${b.rule}; border-bottom: .5mm solid ${b.rule};
+      clip-path: polygon(0 0, 100% 0, calc(100% - 5mm) 50%, 100% 100%, 0 100%); max-width: 92%; overflow-wrap: anywhere; text-align: left; }
+    .qr { width: 50mm; height: 50mm; display: block; }
+    .how { font-size: 10.5pt; color: ${b.grey}; }
+    .foot { align-self: stretch; margin: 0 8mm; padding-top: 2.5mm; border-top: .4mm solid ${b.sandy}; display: flex; justify-content: space-between; font-size: 8pt; color: ${b.grey}; }
+    .foot .prata { color: ${b.brown}; font-size: 9pt; }
+  `, `<b>Room door cards</b>Stick one on each room door, and one inside each linen cupboard.${logo ? '' : ' Upload your logo in Settings to have it printed on the cards.'}`,
+  `<div class="g">${cards}</div>`);
 };
 
 // ------------------------------------------------------------- needs checking ---

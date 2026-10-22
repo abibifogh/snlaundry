@@ -391,3 +391,13 @@ kbd.ui { display: inline-block; font: inherit; font-size: .92em; font-weight: 60
 .ln-book button { background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; font-size: 13px; }
 .ln-book button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 .ln-sofa { white-space: nowrap; font-size: 13px; }
+.ls-type { position: absolute; inset: 0; z-index: 4; background: var(--card); display: flex; flex-direction: column; gap: 12px; padding: 16px; overflow-y: auto; }
+.ls-type-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 20px; }
+.ls-type input { font-size: 34px; font-weight: 700; letter-spacing: .08em; text-align: center; padding: 14px; border-width: 2px; }
+.ls-type-list { display: grid; gap: 8px; }
+.ls-type-row { background: #fff; color: var(--ink); border: 2px solid var(--line); border-radius: 16px; padding: 8px 12px; display: grid; grid-template-columns: 48px 1fr; gap: 12px; align-items: center; text-align: left; font-weight: 400; }
+.ls-type-row:hover { border-color: var(--accent); }
+.ls-type-row b { display: block; font-size: 18px; }
+.ls-type-row .cd { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 700; font-size: 16px; margin-right: 8px; }
+.ls-type-row small { display: block; color: var(--muted); font-size: 14px; }
+.ls-type-hint { margin: 0; color: var(--muted); font-size: 15px; }
