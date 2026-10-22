@@ -23,7 +23,6 @@ import { newId } from './auth.js';
 const K_LINEN = 'linen';
 const LOG_CAP = 5000;
 
-export const BED_SIZES = ['Single', 'Double', 'Queen', 'King'];
 export const PIECE_STATUSES = ['clean', 'in_use', 'soiled', 'washing', 'missing', 'retired'];
 export const RETIRE_REASONS = { damaged: 'Damaged', worn: 'Worn out', lost: 'Lost', charged: 'Charged to guest' };
 const CATEGORIES = ['bed', 'bath'];
@@ -38,13 +37,16 @@ export function defaultLinen() {
     towelChangeDays: 1,
     washAlertHours: 24,
     types: [
-      { id: 'dsheet', name: 'Double sheet', category: 'bed', cost: 0, washLife: 200, active: true },
-      { id: 'bsheet', name: 'Big sheet', category: 'bed', cost: 0, washLife: 200, active: true },
-      { id: 'pcase', name: 'Pillowcase', category: 'bed', cost: 0, washLife: 250, active: true },
-      { id: 'btowel', name: 'Body towel', category: 'bath', cost: 0, washLife: 150, active: true },
-      { id: 'htowel', name: 'Hand towel', category: 'bath', cost: 0, washLife: 150, active: true },
-      { id: 'ftowel', name: 'Floor towel', category: 'bath', cost: 0, washLife: 150, active: true },
+      // colour: the stripe on the label and the picture on staff screens
+      { id: 'dsheet', name: 'Double sheet', category: 'bed', cost: 0, washLife: 200, active: true, color: '#2f6fd6' },
+      { id: 'bsheet', name: 'Big sheet', category: 'bed', cost: 0, washLife: 200, active: true, color: '#7a4cc2' },
+      { id: 'pcase', name: 'Pillowcase', category: 'bed', cost: 0, washLife: 250, active: true, color: '#d9a400' },
+      { id: 'btowel', name: 'Body towel', category: 'bath', cost: 0, washLife: 150, active: true, color: '#1f9d55' },
+      { id: 'htowel', name: 'Hand towel', category: 'bath', cost: 0, washLife: 150, active: true, color: '#e2702a' },
+      { id: 'ftowel', name: 'Floor towel', category: 'bath', cost: 0, washLife: 150, active: true, color: '#8a5a35' },
     ],
+    // Bed sizes are the admin's own list (Setup → "What each bed takes"); each
+    // size maps to what one bed of that size takes. Key order is display order.
     bedSets: {
       Single: { dsheet: 2, pcase: 1 },
       Double: { dsheet: 2, pcase: 1 },
@@ -63,7 +65,7 @@ export async function getLinen() {
   const d = await readJSON(K_LINEN, null);
   const def = defaultLinen();
   if (!d) return def;
-  return { ...def, ...d, seq: { ...def.seq, ...(d.seq || {}) }, bedSets: { ...def.bedSets, ...(d.bedSets || {}) } };
+  return { ...def, ...d, seq: { ...def.seq, ...(d.seq || {}) }, bedSets: d.bedSets && Object.keys(d.bedSets).length ? d.bedSets : def.bedSets };
 }
 
 async function mutate(fn) {
@@ -76,8 +78,11 @@ async function mutate(fn) {
 // What staff see: everything except the older log entries.
 export async function linenView() {
   const d = await getLinen();
-  return { ...d, log: d.log.slice(-400) };
+  return { ...d, types: d.types.map((t, i) => ({ ...t, color: t.color || PALETTE[i % PALETTE.length] })), log: d.log.slice(-400) };
 }
+
+// Colours for item types that don't have one yet, in the order they were added.
+const PALETTE = ['#2f6fd6', '#7a4cc2', '#d9a400', '#1f9d55', '#e2702a', '#8a5a35', '#0e7490', '#be185d', '#4d7c0f', '#475569'];
 
 // ------------------------------------------------------------------- setup ---
 export async function saveLinenSetup(patch = {}, actor) {
@@ -101,6 +106,7 @@ export async function saveLinenSetup(patch = {}, actor) {
           cost: Math.max(0, Number(t.cost) || 0),
           washLife: clampInt(t.washLife, 10, 2000, 200),
           active: t.active !== false,
+          color: /^#[0-9a-f]{6}$/i.test(String(t.color || '')) ? String(t.color).toLowerCase() : ((d.types.find((x) => x.id === id) || {}).color || PALETTE[seen.size % PALETTE.length]),
         };
       });
       // A type that still has pieces can be hidden, never deleted.
@@ -113,11 +119,29 @@ export async function saveLinenSetup(patch = {}, actor) {
     }
     const typeIds = new Set(d.types.map((t) => t.id));
 
-    if (patch.bedSets && typeof patch.bedSets === 'object') {
+    // Bed sizes: [{ name, originalName, set }]. A rename carries every bed of
+    // that size along; a size still used by a bed can't be removed.
+    const renamed = {};
+    if (Array.isArray(patch.bedSizes)) {
+      if (!patch.bedSizes.length) throw httpError(400, 'Keep at least one bed size.');
       const sets = {};
-      BED_SIZES.forEach((size) => { sets[size] = cleanSet(patch.bedSets[size] || d.bedSets[size] || {}, typeIds); });
+      patch.bedSizes.forEach((z) => {
+        const name = String(z.name || '').trim().slice(0, 40);
+        if (!name) throw httpError(400, 'Every bed size needs a name.');
+        if (Object.keys(sets).some((k) => k.toLowerCase() === name.toLowerCase())) throw httpError(400, `Bed size "${name}" is listed twice.`);
+        sets[name] = cleanSet(z.set || {}, typeIds);
+        if (z.originalName && z.originalName !== name && d.bedSets[z.originalName]) renamed[z.originalName] = name;
+      });
       d.bedSets = sets;
+      d.rooms.forEach((r) => r.beds.forEach((b) => { if (renamed[b.size]) b.size = renamed[b.size]; }));
+    } else if (patch.bedSets && typeof patch.bedSets === 'object') {
+      Object.keys(d.bedSets).forEach((size) => { if (patch.bedSets[size]) d.bedSets[size] = cleanSet(patch.bedSets[size], typeIds); });
     }
+    const sizeOf = (size) => {
+      const z = renamed[size] || size;
+      if (!d.bedSets[z]) throw httpError(400, `"${size}" isn't one of your bed sizes. Pick a size for every bed.`);
+      return z;
+    };
 
     if (Array.isArray(patch.rooms)) {
       const names = new Set();
@@ -132,7 +156,7 @@ export async function saveLinenSetup(patch = {}, actor) {
           return {
             id: prev ? prev.id : newId('bed'),
             label: String(b.label || '').trim() || `Bed ${i + 1}`,
-            size: BED_SIZES.includes(b.size) ? b.size : 'Double',
+            size: sizeOf(b.size),
             state: prev ? prev.state : 'stripped',
             changedAt: prev ? prev.changedAt : null,
           };
@@ -173,6 +197,10 @@ export async function saveLinenSetup(patch = {}, actor) {
         delete r._from;
       }
       d.rooms = next;
+    }
+    for (const r of d.rooms) {
+      const b = r.beds.find((x) => !d.bedSets[x.size]);
+      if (b) throw httpError(400, `${r.name} ${b.label} is a ${b.size} bed. Change that bed's size before removing the "${b.size}" size.`);
     }
     addLog(d, actor, 'Setup changed', 'Rooms, items or par levels updated');
     return d;
@@ -303,7 +331,7 @@ export async function receiveBatch(id, { back = [], rewash = [], damaged = [], l
       p.batchId = null;
       if (backC.includes(c)) { p.washes += 1; setStatus(p, 'clean', at); p.loc = loc; }
       else if (rewashC.includes(c)) { p.washes += 1; setStatus(p, 'soiled', at); }
-      else if (dmgC.includes(c)) { p.washes += 1; retire(p, 'damaged', note || `Damaged in ${batch.number}`, at); }
+      else if (dmgC.includes(c)) { p.washes += 1; retire(p, 'damaged', note || `Damaged in ${batch.number}`, at, isManager(actor)); }
       else { setStatus(p, 'missing', at); p.missingFrom = `Short from ${batch.number}`; missing.push(c); }
     });
     Object.assign(batch, {
@@ -355,9 +383,27 @@ export async function retirePieces({ codes, reason, note = '' } = {}, actor) {
       const p = pieceOr404(d, c);
       if (p.status === 'retired') throw httpError(400, `${c} is already out of stock.`);
       if (p.status === 'washing') throw httpError(400, `${c} is in a wash batch. Record it as damaged when the batch is received.`);
-      retire(p, reason, String(note || '').trim(), at);
+      retire(p, reason, String(note || '').trim(), at, reason === 'lost' || reason === 'charged' || isManager(actor));
     });
     addLog(d, actor, RETIRE_REASONS[reason], `${list.length} piece(s)${note ? ' · ' + String(note).trim() : ''}`, list);
+    return { ok: true };
+  });
+}
+
+// A supervisor checks damage reported by staff: confirm it's out of stock, or
+// put it back in use (into the soiled bin, to be washed before it goes out).
+export async function checkDamaged({ code, usable = false } = {}, actor) {
+  return mutate((d) => {
+    const p = pieceOr404(d, String(code || '').trim().toUpperCase());
+    if (p.status !== 'retired' || p.checked !== false) throw httpError(400, `${p.code} isn't waiting to be checked.`);
+    if (usable) {
+      setStatus(p, 'soiled', nowIso());
+      p.retiredReason = null; p.note = ''; delete p.checked;
+      addLog(d, actor, 'Damage checked', `${p.code} is still usable · back to the soiled bin`, [p.code]);
+    } else {
+      p.checked = true;
+      addLog(d, actor, 'Damage checked', `${p.code} confirmed out of stock`, [p.code]);
+    }
     return { ok: true };
   });
 }
@@ -438,10 +484,13 @@ function setStatus(p, status, at) {
   if (status !== 'washing') p.batchId = null;
   if (status !== 'missing') p.missingFrom = null;
 }
-function retire(p, reason, note, at) {
+// checked: false puts the piece on the supervisor's "Needs checking" list.
+function retire(p, reason, note, at, checked = true) {
   setStatus(p, 'retired', at);
   p.retiredReason = reason; p.note = note || '';
+  if (checked) delete p.checked; else p.checked = false;
 }
+function isManager(actor) { return !!actor && (actor.role === 'admin' || !!(actor.permissions && actor.permissions.linenManage)); }
 function statusWord(p) {
   return {
     clean: `clean in ${locName(p.loc)}`, in_use: `in use in ${p.room}`, soiled: 'in the soiled bin',

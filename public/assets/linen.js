@@ -28,12 +28,13 @@ const LN_STATUS = {
   washing: ['In the wash', 'ln-violet'], missing: ['Missing', 'ln-bad'], retired: ['Out of stock', 'ln-mute'],
 };
 const LN_REASONS = { damaged: 'Damaged', worn: 'Worn out', lost: 'Lost', charged: 'Charged to guest' };
-const LN_SIZES = ['Single', 'Double', 'Queen', 'King'];
 
 function lnCanSee() { return ['linenUse', 'linenWash', 'linenCheckout', 'linenManage'].some(can); }
 
 const LN_SUBS = [
   { id: 'overview', label: 'Overview', show: () => true },
+  { id: 'review', label: 'Needs checking', show: () => can('linenManage'), badge: () => lnReviewList().length },
+  { id: 'staff', label: 'Staff screens', show: () => can('linenManage') },
   { id: 'rooms', label: 'Rooms', show: () => can('linenUse') || can('linenCheckout') || can('linenManage') },
   { id: 'wash', label: 'Wash', show: () => can('linenWash') || can('linenManage') },
   { id: 'stock', label: 'Storeroom & cupboards', show: () => can('linenUse') || can('linenManage') },
@@ -43,13 +44,20 @@ const LN_SUBS = [
   { id: 'setup', label: 'Setup', show: () => can('linenManage') },
 ];
 
+// Housekeeping and laundry staff get the simple picture screens (linen-simple.js);
+// supervisors and admins get the full tab, and can open the staff screens too.
+function lnSimpleMode() { return ['housekeeping', 'laundry'].includes(state.user?.role); }
+
 async function renderLinen(view) {
   LN.doc = await api('GET', '/linen');
+  if (lnSimpleMode()) return renderLinenSimple(view);
   const subs = LN_SUBS.filter((s) => s.show());
   if (!subs.find((s) => s.id === LN.sub)) LN.sub = 'overview';
-  view.innerHTML = `<div class="ln-subnav">${subs.map((s) => `<button class="${s.id === LN.sub ? 'active' : ''}" onclick="lnGo('${s.id}')">${s.label}</button>`).join('')}</div><div id="lnView"></div>`;
+  view.innerHTML = `<div class="ln-subnav">${subs.map((s) => { const n = s.badge ? s.badge() : 0;
+    return `<button class="${s.id === LN.sub ? 'active' : ''}" onclick="lnGo('${s.id}')">${s.label}${n ? `<span class="tab-badge">${n}</span>` : ''}</button>`; }).join('')}</div><div id="lnView"></div>`;
   const v = $('#lnView');
-  ({ overview: lnOverview, rooms: lnRooms, wash: lnWash, stock: lnStock, pieces: lnPieces, reports: lnReports, activity: lnActivity, setup: lnSetup })[LN.sub](v);
+  if (LN.sub === 'staff') return renderLinenSimple(v);
+  ({ overview: lnOverview, review: lnReview, rooms: lnRooms, wash: lnWash, stock: lnStock, pieces: lnPieces, reports: lnReports, activity: lnActivity, setup: lnSetup })[LN.sub](v);
 }
 // Coming into Setup starts a fresh draft; re-drawing Setup keeps the edits.
 window.lnGo = (sub) => { if (sub === 'setup' && LN.sub !== 'setup') LN.draft = null; LN.sub = sub; renderLinen($('#view')).catch((e) => lnErr(e)); };
@@ -60,6 +68,22 @@ function lnErr(e) { const v = $('#view'); if (v) v.insertAdjacentHTML('afterbegi
 function lnType(id) { return LN.doc.types.find((t) => t.id === id) || { id, name: id, category: 'bed', cost: 0, washLife: 200 }; }
 function lnTypeName(id) { return lnType(id).name; }
 function lnPiece(code) { return LN.doc.pieces.find((p) => p.code === code); }
+function lnColor(id) { return lnType(id).color || '#64748b'; }
+// A simple drawing of each item, in its colour, for staff screens and labels.
+function lnPic(typeId, size = 56) {
+  const t = lnType(typeId), c = lnColor(typeId);
+  const n = `${t.id} ${t.name}`.toLowerCase();
+  const kind = /pillow|pcase/.test(n) ? 'pillow' : /floor|mat|ftowel/.test(n) ? 'mat' : /hand|htowel/.test(n) ? 'hand' : t.category === 'bath' || /towel/.test(n) ? 'towel' : /big|king|queen|bsheet/.test(n) ? 'big' : 'sheet';
+  const shapes = {
+    sheet: `<rect x="8" y="14" width="48" height="36" rx="5" fill="${c}"/><rect x="8" y="14" width="48" height="11" rx="5" fill="#fff" opacity=".35"/><path d="M8 32h48M8 41h48" stroke="#fff" stroke-width="2" opacity=".55"/>`,
+    big: `<rect x="4" y="12" width="56" height="40" rx="5" fill="${c}"/><rect x="4" y="12" width="56" height="12" rx="5" fill="#fff" opacity=".35"/><path d="M4 30h56M4 38h56M4 46h56" stroke="#fff" stroke-width="2" opacity=".55"/>`,
+    pillow: `<path d="M10 22c0-6 4-9 10-9h24c6 0 10 3 10 9v20c0 6-4 9-10 9H20c-6 0-10-3-10-9z" fill="${c}"/><path d="M14 20c6 3 30 3 36 0" stroke="#fff" stroke-width="2.4" fill="none" opacity=".7"/>`,
+    towel: `<rect x="10" y="10" width="44" height="44" rx="6" fill="${c}"/><rect x="10" y="40" width="44" height="7" fill="#fff" opacity=".7"/><path d="M14 16h36" stroke="#fff" stroke-width="2" opacity=".5"/>`,
+    hand: `<rect x="18" y="16" width="28" height="34" rx="5" fill="${c}"/><rect x="18" y="38" width="28" height="5" fill="#fff" opacity=".75"/>`,
+    mat: `<rect x="6" y="20" width="52" height="26" rx="6" fill="${c}"/><rect x="11" y="25" width="42" height="16" rx="3" fill="none" stroke="#fff" stroke-width="2.4" opacity=".7"/>`,
+  };
+  return `<svg width="${size}" height="${size}" viewBox="0 0 64 64" aria-hidden="true">${shapes[kind]}</svg>`;
+}
 function lnLocName(loc) { return loc === 'store' ? 'Storeroom' : `${loc} cupboard`; }
 function lnDays(iso) { return iso ? Math.floor((Date.now() - new Date(iso)) / 86400000) : null; }
 function lnHours(iso) { return iso ? (Date.now() - new Date(iso)) / 3600000 : 0; }
@@ -168,10 +192,27 @@ function lnLoadJsQR() {
   if (window.jsQR) return Promise.resolve();
   return new Promise((res, rej) => {
     const s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js';
+    s.src = '/assets/vendor/jsQR.js';
     s.onload = res; s.onerror = () => rej(new Error("Couldn't load the QR reader. Type the code instead."));
     document.head.appendChild(s);
   });
+}
+// Reads a QR code from a playing <video>: returns an async function that gives
+// the code it sees, or null.
+async function lnDetector(video) {
+  if ('BarcodeDetector' in window) {
+    const bd = new window.BarcodeDetector({ formats: ['qr_code'] });
+    return async () => { const r = await bd.detect(video); return r[0] && r[0].rawValue; };
+  }
+  await lnLoadJsQR();
+  const cv = document.createElement('canvas'), cx = cv.getContext('2d', { willReadFrequently: true });
+  return async () => {
+    if (!window.jsQR || !video.videoWidth) return null;
+    cv.width = video.videoWidth; cv.height = video.videoHeight;
+    cx.drawImage(video, 0, 0);
+    const r = window.jsQR(cx.getImageData(0, 0, cv.width, cv.height).data, cv.width, cv.height);
+    return r && r.data;
+  };
 }
 window.lnCamera = async (id) => {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return alert('This device has no camera access here. Type the code instead.');
@@ -189,20 +230,7 @@ window.lnCamera = async (id) => {
   }
   video.srcObject = stream; await video.play().catch(() => {});
   let detect;
-  if ('BarcodeDetector' in window) {
-    const bd = new window.BarcodeDetector({ formats: ['qr_code'] });
-    detect = async () => { const r = await bd.detect(video); return r[0] && r[0].rawValue; };
-  } else {
-    try { await lnLoadJsQR(); } catch (e) { msg.textContent = e.message; }
-    const cv = document.createElement('canvas'), cx = cv.getContext('2d', { willReadFrequently: true });
-    detect = async () => {
-      if (!window.jsQR || !video.videoWidth) return null;
-      cv.width = video.videoWidth; cv.height = video.videoHeight;
-      cx.drawImage(video, 0, 0);
-      const r = window.jsQR(cx.getImageData(0, 0, cv.width, cv.height).data, cv.width, cv.height);
-      return r && r.data;
-    };
-  }
+  try { detect = await lnDetector(video); } catch (e) { msg.textContent = e.message; detect = async () => null; }
   _lnCam = { stream, ov, alive: true, last: '', lastAt: 0 };
   const loop = async () => {
     if (!_lnCam || !_lnCam.alive) return;
@@ -241,7 +269,7 @@ function lnPrintLabels(codes) {
       const cvs = tmp.querySelector('canvas');
       src = cvs ? cvs.toDataURL('image/png') : '';
     }
-    return `<div class="l"><img src="${src}" alt=""><div><b>${c}</b><span>${esc(p ? lnTypeName(p.typeId) : '')}</span><small>${esc(state.settings?.hostelName || '')}</small></div></div>`;
+    return `<div class="l" style="border-left:3mm solid ${p ? lnColor(p.typeId) : '#999'}"><img src="${src}" alt=""><div><b>${c}</b><span>${p ? lnPic(p.typeId, 22) : ''} ${esc(p ? lnTypeName(p.typeId) : '')}</span><small>${esc(state.settings?.hostelName || '')}</small></div></div>`;
   }).join('');
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Linen labels</title><style>
     body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:8mm}
@@ -249,13 +277,70 @@ function lnPrintLabels(codes) {
     .l{display:flex;gap:3mm;align-items:center;border:1px dashed #bbb;border-radius:2mm;padding:2.5mm;break-inside:avoid}
     .l img{width:22mm;height:22mm}
     .l b{display:block;font-size:15pt;letter-spacing:.5pt;font-family:ui-monospace,Menlo,monospace}
-    .l span{display:block;font-size:9pt}.l small{display:block;font-size:7pt;color:#666}
+    .l span{display:flex;align-items:center;gap:1mm;font-size:9pt}.l small{display:block;font-size:7pt;color:#666}
     p{font-size:10pt;color:#555}@media print{p{display:none}}
   </style></head><body><p>${codes.length} label(s). Print on sticker paper, or on paper and sew/iron into a corner of each piece. Use wash-proof labels for linen.</p>
   <div class="g">${labels}</div><script>setTimeout(function(){window.print()},400)<\/script></body></html>`);
   w.document.close();
 }
 window.lnPrintCodes = (codes) => lnPrintLabels(codes);
+
+// A card for each room door (and cupboard): scanning it opens that room on the
+// staff screens, so nobody has to find the room in a list.
+window.lnPrintRoomCards = () => {
+  const rooms = LN.doc.rooms;
+  if (!rooms.length) return alert('Add rooms first.');
+  const w = window.open('', '_blank');
+  if (!w) return alert('Allow pop-ups for this site to print room cards.');
+  const tmp = document.createElement('div');
+  const cards = rooms.map((r) => {
+    let src = '';
+    if (window.QRCode) {
+      tmp.innerHTML = '';
+      new QRCode(tmp, { text: 'ROOM:' + r.name, width: 240, height: 240, correctLevel: QRCode.CorrectLevel.M });
+      const cvs = tmp.querySelector('canvas'); src = cvs ? cvs.toDataURL('image/png') : '';
+    }
+    return `<div class="c"><img src="${src}" alt=""><b>${esc(r.name)}</b><span>Scan to open this room</span></div>`;
+  }).join('');
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Room cards</title><style>
+    body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:10mm}
+    .g{display:grid;grid-template-columns:repeat(2,1fr);gap:8mm}
+    .c{border:1px dashed #bbb;border-radius:4mm;padding:6mm;text-align:center;break-inside:avoid}
+    .c img{width:50mm;height:50mm}.c b{display:block;font-size:24pt;margin-top:3mm}.c span{font-size:11pt;color:#555}
+    p{font-size:10pt;color:#555}@media print{p{display:none}}
+  </style></head><body><p>Stick one on each room door, and one inside each linen cupboard.</p><div class="g">${cards}</div>
+  <script>setTimeout(function(){window.print()},400)<\/script></body></html>`);
+  w.document.close();
+};
+
+// ------------------------------------------------------------- needs checking ---
+// What staff couldn't settle: missing pieces, and damage they reported.
+function lnReviewList() {
+  if (!LN.doc) return [];
+  return LN.doc.pieces.filter((p) => p.status === 'missing' || (p.status === 'retired' && p.checked === false))
+    .sort((a, b) => String(b.statusAt).localeCompare(String(a.statusAt)));
+}
+function lnReview(v) {
+  const list = lnReviewList();
+  v.innerHTML = `
+    <div class="ln-head"><div><h2>Needs checking</h2><p class="hint">Missing pieces and damage reported by staff. They carry on working; you settle each one here.</p></div></div>
+    <div class="ln-review">${list.map((p) => {
+      const missing = p.status === 'missing';
+      const acts = missing
+        ? `<button class="small" onclick="lnRevFound('${p.code}')">Found</button><button class="small secondary" onclick="lnRevRetire('${p.code}','lost')">Lost</button><button class="small secondary" onclick="lnRevRetire('${p.code}','charged')">Charge guest</button>`
+        : `<button class="small secondary" onclick="lnRevDamaged('${p.code}',true)">Still usable</button><button class="small danger" onclick="lnRevDamaged('${p.code}',false)">Out of stock</button>`;
+      return `<div class="ln-rev"><span>${lnPic(p.typeId, 52)}</span>
+        <div><b>${esc(lnTypeName(p.typeId))}</b> <a href="#" class="ln-code" onclick="lnOpenPiece('${p.code}');return false">${p.code}</a>
+        <div class="muted" style="font-size:13px">${missing ? esc(p.missingFrom || 'Missing') : `Reported ${esc((LN_REASONS[p.retiredReason] || '').toLowerCase())}${p.note ? ': ' + esc(p.note) : ''}`} · ${fmt(p.statusAt)}</div></div>
+        <div class="ln-rev-acts">${acts}</div></div>`;
+    }).join('') || '<div class="card"><p class="muted" style="margin:0">Nothing to check.</p></div>'}</div>`;
+}
+window.lnRevFound = async (code) => { try { await api('POST', '/linen/found', { codes: [code], as: 'soiled' }); await lnReload(); } catch (e) { alert(e.message); } };
+window.lnRevRetire = async (code, reason) => {
+  if (!confirm(`${code}: ${reason === 'lost' ? 'write off as lost' : 'charge to the guest'}?`)) return;
+  try { await api('POST', '/linen/retire', { codes: [code], reason, note: '' }); await lnReload(); } catch (e) { alert(e.message); }
+};
+window.lnRevDamaged = async (code, usable) => { try { await api('POST', '/linen/check-damaged', { code, usable }); await lnReload(); } catch (e) { alert(e.message); } };
 
 // --------------------------------------------------------------- overview ---
 function lnOverview(v) {
@@ -329,7 +414,9 @@ function lnAlerts() {
     if ((clean[k] || 0) < n) a.push({ level: 'bad', title: `No clean ${lnTypeName(k).toLowerCase()}s left`, text: `${clean[k] || 0} clean. The next bed or bathroom that needs one can't be done until the wash comes back.`, action: can('linenWash') ? "lnGo('wash')" : '', label: 'Open wash' });
   });
   const missing = d.pieces.filter((p) => p.status === 'missing');
-  if (missing.length) a.push({ level: 'bad', title: `${missing.length} piece(s) missing`, text: [...new Set(missing.map((p) => p.missingFrom))].slice(0, 3).join(' · '), action: "lnShowMissing()", label: 'See missing' });
+  if (missing.length) a.push({ level: 'bad', title: `${missing.length} piece(s) missing`, text: [...new Set(missing.map((p) => p.missingFrom))].slice(0, 3).join(' · '), action: can('linenManage') ? "lnGo('review')" : 'lnShowMissing()', label: can('linenManage') ? 'Check them' : 'See missing' });
+  const dmgToCheck = d.pieces.filter((p) => p.status === 'retired' && p.checked === false);
+  if (dmgToCheck.length && can('linenManage')) a.push({ level: 'warn', title: `${dmgToCheck.length} damaged piece(s) to check`, text: 'Reported by staff. Confirm, or put back in use.', action: "lnGo('review')", label: 'Check them' });
   d.batches.filter((b) => b.status === 'washing' && lnHours(b.sentAt) >= d.washAlertHours).forEach((b) =>
     a.push({ level: 'warn', title: `${b.number} has been in the wash ${Math.floor(lnHours(b.sentAt))} hours`, text: `${b.codes.length} pieces sent ${fmt(b.sentAt)} by ${b.sentBy}.`, action: can('linenWash') ? `lnOpenReceive('${b.id}')` : '', label: 'Receive' }));
   const checkouts = d.rooms.filter((r) => r.checkoutAt);
@@ -889,7 +976,7 @@ function lnActivity(v) {
 function lnSetup(v) {
   const d = LN.doc;
   if (!LN.draft) {
-    LN.draft = JSON.parse(JSON.stringify({ par: d.par, bedChangeDays: d.bedChangeDays, towelChangeDays: d.towelChangeDays, washAlertHours: d.washAlertHours, types: d.types, bedSets: d.bedSets, rooms: d.rooms.map((r) => ({ ...r, originalName: r.name })) }));
+    LN.draft = JSON.parse(JSON.stringify({ par: d.par, bedChangeDays: d.bedChangeDays, towelChangeDays: d.towelChangeDays, washAlertHours: d.washAlertHours, types: d.types, bedSizes: Object.entries(d.bedSets).map(([name, set]) => ({ name, originalName: name, set })), rooms: d.rooms.map((r) => ({ ...r, originalName: r.name })) }));
   }
   const g = LN.draft;
   const bedTypes = g.types.filter((t) => t.category === 'bed' && t.active);
@@ -916,9 +1003,9 @@ function lnSetup(v) {
         <div><label>Change towels every (days)</label><input type="number" min="1" value="${g.towelChangeDays}" oninput="LN.draft.towelChangeDays=+this.value"></div>
         <div><label>Flag a wash after (hours)</label><input type="number" min="1" value="${g.washAlertHours}" oninput="LN.draft.washAlertHours=+this.value"></div>
       </div></div>
-    <div class="card"><h3 style="margin:0 0 6px">Items</h3><p class="hint">Bed items go on beds; bath items are set per room. Wash life is roughly how many washes a piece lasts.</p>
-      <div class="table-wrap"><table class="data"><thead><tr><th>Name</th><th>Kind</th><th>Unit cost</th><th>Wash life</th><th>In use</th></tr></thead><tbody>
-      ${g.types.map((t, i) => `<tr><td><input value="${esc(t.name)}" oninput="LN.draft.types[${i}].name=this.value"></td>
+    <div class="card"><h3 style="margin:0 0 6px">Items</h3><p class="hint">Bed items go on beds; bath items are set per room. Wash life is roughly how many washes a piece lasts. The colour is the stripe on the label and the picture staff see.</p>
+      <div class="table-wrap"><table class="data"><thead><tr><th>Colour</th><th>Name</th><th>Kind</th><th>Unit cost</th><th>Wash life</th><th>In use</th></tr></thead><tbody>
+      ${g.types.map((t, i) => `<tr><td><input type="color" value="${esc(t.color || '#64748b')}" onchange="LN.draft.types[${i}].color=this.value" aria-label="Colour for ${esc(t.name)}" style="width:46px;height:38px;padding:2px"></td><td><input value="${esc(t.name)}" oninput="LN.draft.types[${i}].name=this.value"></td>
         <td><select onchange="LN.draft.types[${i}].category=this.value;lnGo('setup')"><option value="bed" ${t.category === 'bed' ? 'selected' : ''}>Bed</option><option value="bath" ${t.category === 'bath' ? 'selected' : ''}>Bath</option></select></td>
         <td><input type="number" min="0" step="0.01" value="${t.cost}" oninput="LN.draft.types[${i}].cost=+this.value" style="max-width:110px"></td>
         <td><input type="number" min="10" value="${t.washLife}" oninput="LN.draft.types[${i}].washLife=+this.value" style="max-width:100px"></td>
@@ -926,10 +1013,14 @@ function lnSetup(v) {
       </tbody></table></div>
       <button class="small secondary" style="margin-top:8px" onclick="LN.draft.types.push({name:'New item',category:'bed',cost:0,washLife:200,active:true});lnGo('setup')">+ Add item</button></div>
     <div class="card"><h3 style="margin:0 0 6px">What each bed takes</h3>
-      <div class="table-wrap"><table class="data"><thead><tr><th>Bed size</th>${bedTypes.map((t) => `<th>${esc(t.name)}</th>`).join('')}</tr></thead><tbody>
-      ${LN_SIZES.map((s) => `<tr><td><b>${s}</b></td>${bedTypes.map((t) => `<td><input type="number" min="0" max="20" value="${(g.bedSets[s] || {})[t.id] || 0}" oninput="lnSetQty(LN.draft.bedSets,'${s}','${t.id}',this.value)" style="max-width:80px"></td>`).join('')}</tr>`).join('')}
-      </tbody></table></div></div>
+      <p class="hint">Name your own bed sizes (e.g. Bunk, Super king). Renaming a size renames it on every bed; a size can only be removed once no bed uses it.</p>
+      <div class="table-wrap"><table class="data"><thead><tr><th>Bed size</th>${bedTypes.map((t) => `<th>${esc(t.name)}</th>`).join('')}<th></th></tr></thead><tbody>
+      ${g.bedSizes.map((z, zi) => `<tr><td><input value="${esc(z.name)}" onchange="lnRenameSize(${zi},this.value)" aria-label="Bed size name" style="max-width:160px"></td>${bedTypes.map((t) => `<td><input type="number" min="0" max="20" value="${(z.set || {})[t.id] || 0}" oninput="lnSetQty(LN.draft.bedSizes[${zi}],'set','${t.id}',this.value)" style="max-width:80px"></td>`).join('')}
+        <td><button class="small ghost" onclick="lnRemoveSize(${zi})" aria-label="Remove bed size">✕</button></td></tr>`).join('')}
+      </tbody></table></div>
+      <button class="small secondary" style="margin-top:8px" onclick="lnAddSize()">+ Add bed size</button></div>
     <div class="card"><h3 style="margin:0 0 6px">Rooms</h3><p class="hint">Each bed, the room's towels, and whether the room has its own linen cupboard.</p>
+      <button class="small secondary" onclick="lnPrintRoomCards()">Print room door cards</button>
       ${settingsRooms.length ? `<button class="small secondary" onclick="lnImportRooms()">Add ${settingsRooms.length} room(s) from Settings → Rooms</button>` : ''}
       <div class="ln-setrooms">${g.rooms.map((r, ri) => `
         <div class="ln-setroom">
@@ -938,18 +1029,40 @@ function lnSetup(v) {
             <button class="small danger" onclick="LN.draft.rooms.splice(${ri},1);lnGo('setup')">Remove room</button></div>
           <label>Beds</label>
           ${r.beds.map((b, bi) => `<div class="ln-bedrow"><input value="${esc(b.label)}" oninput="LN.draft.rooms[${ri}].beds[${bi}].label=this.value" placeholder="e.g. Bed 1">
-            <select onchange="LN.draft.rooms[${ri}].beds[${bi}].size=this.value">${LN_SIZES.map((s) => `<option ${b.size === s ? 'selected' : ''}>${s}</option>`).join('')}</select>
+            <select onchange="LN.draft.rooms[${ri}].beds[${bi}].size=this.value">${g.bedSizes.map((z) => `<option value="${esc(z.name)}" ${b.size === z.name ? 'selected' : ''}>${esc(z.name)}</option>`).join('')}</select>
             <button class="small ghost" onclick="LN.draft.rooms[${ri}].beds.splice(${bi},1);lnGo('setup')" aria-label="Remove bed">✕</button></div>`).join('')}
-          <button class="small secondary" onclick="LN.draft.rooms[${ri}].beds.push({label:'Bed ${r.beds.length + 1}',size:'Double'});lnGo('setup')">+ Bed</button>
+          <button class="small secondary" onclick="LN.draft.rooms[${ri}].beds.push({label:'Bed ${r.beds.length + 1}',size:lnDefaultSize()});lnGo('setup')">+ Bed</button>
           ${bathTypes.length ? `<label>Towels for the room</label><div class="ln-towels">${bathTypes.map((t) => `<span><input type="number" min="0" max="20" value="${(r.towels || {})[t.id] || 0}" oninput="lnSetQty(LN.draft.rooms[${ri}],'towels','${t.id}',this.value)"> ${esc(t.name)}</span>`).join('')}</div>` : ''}
         </div>`).join('')}</div>
-      <button class="small secondary" style="margin-top:10px" onclick="LN.draft.rooms.push({name:'',cupboard:false,beds:[{label:'Bed 1',size:'Double'}],towels:{}});lnGo('setup')">+ Add room</button></div>
+      <button class="small secondary" style="margin-top:10px" onclick="LN.draft.rooms.push({name:'',cupboard:false,beds:[{label:'Bed 1',size:lnDefaultSize()}],towels:{}});lnGo('setup')">+ Add room</button></div>
     <div class="ln-savebar"><button class="secondary" onclick="LN.draft=null;lnGo('setup')">Undo changes</button><button onclick="lnSaveSetup()">Save setup</button></div>`;
 }
 window.lnSetQty = (obj, key, typeId, val) => { obj[key] = obj[key] || {}; const n = Math.max(0, Math.round(+val || 0)); if (n) obj[key][typeId] = n; else delete obj[key][typeId]; };
+// Bed sizes are the admin's own list. A rename moves every bed of that size with it.
+window.lnDefaultSize = () => { const z = LN.draft.bedSizes; return (z.find((x) => x.name === 'Double') || z[0] || { name: '' }).name; };
+window.lnRenameSize = (zi, val) => {
+  const z = LN.draft.bedSizes[zi], name = String(val).trim();
+  if (!name || LN.draft.bedSizes.some((x, i) => i !== zi && x.name.toLowerCase() === name.toLowerCase())) {
+    alert(name ? `There is already a "${name}" size.` : 'A bed size needs a name.'); return lnGo('setup');
+  }
+  LN.draft.rooms.forEach((r) => r.beds.forEach((b) => { if (b.size === z.name) b.size = name; }));
+  z.name = name; lnGo('setup');
+};
+window.lnRemoveSize = (zi) => {
+  const z = LN.draft.bedSizes[zi];
+  const using = LN.draft.rooms.filter((r) => r.beds.some((b) => b.size === z.name)).map((r) => r.name);
+  if (using.length) return alert(`${z.name} beds are still in ${using.join(', ')}. Change those beds to another size first.`);
+  if (LN.draft.bedSizes.length === 1) return alert('Keep at least one bed size.');
+  LN.draft.bedSizes.splice(zi, 1); lnGo('setup');
+};
+window.lnAddSize = () => {
+  let n = 'New size', i = 2;
+  while (LN.draft.bedSizes.some((x) => x.name === n)) n = `New size ${i++}`;
+  LN.draft.bedSizes.push({ name: n, set: {} }); lnGo('setup');
+};
 window.lnImportRooms = () => {
   (state.settings?.rooms || []).filter((n) => !LN.draft.rooms.some((r) => r.name === n))
-    .forEach((n) => LN.draft.rooms.push({ name: n, cupboard: false, beds: [{ label: 'Bed 1', size: 'Double' }], towels: {} }));
+    .forEach((n) => LN.draft.rooms.push({ name: n, cupboard: false, beds: [{ label: 'Bed 1', size: lnDefaultSize() }], towels: {} }));
   lnGo('setup');
 };
 window.lnSaveSetup = async () => {

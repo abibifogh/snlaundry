@@ -286,6 +286,7 @@ export async function handleRequest({ method, path, query = {}, body = {}, heade
       if (m === 'POST' && sub === 'move') { const u = await requirePerm(headers, 'linenUse'); return json(200, await Linen.moveClean(body, u)); }
       if (m === 'POST' && sub === 'count') { const u = await requirePerm(headers, 'linenUse'); return json(200, await Linen.stockCount(body, u)); }
       if (m === 'POST' && sub === 'found') { const u = await requireAnyPerm(headers, ['linenUse', 'linenWash']); return json(200, await Linen.markFound(body, u)); }
+      if (m === 'POST' && sub === 'check-damaged') { const u = await requirePerm(headers, 'linenManage'); return json(200, await Linen.checkDamaged(body, u)); }
       if (m === 'POST' && sub === 'retire') {
         // Damage and wear: anyone who handles linen. Lost / charged: managers only.
         const u = ['lost', 'charged'].includes(body.reason) ? await requirePerm(headers, 'linenManage') : await requireAnyPerm(headers, ['linenUse', 'linenWash']);
