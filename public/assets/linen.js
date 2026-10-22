@@ -106,26 +106,56 @@ function lnWhere(p) {
   return 'Soiled bin';
 }
 
-// Every bed and every room's towels is a "place" with a set of pieces.
+// A room can be booked two ways (e.g. Double / Triple). These follow how it's booked now.
+function lnBedActive(r, b) { return !b.altOnly || !!r.altOn; }
+function lnRoomTowels(r) { return r.altOn && r.alt ? r.alt.towels || {} : r.towels || {}; }
+function lnBookedAs(r) { return r.alt ? (r.altOn ? r.alt.name : r.alt.mainName) : ''; }
+// One full change for the room as it's booked now (what its cupboard should hold).
+function lnRoomChange(r) {
+  const need = {};
+  r.beds.filter((b) => lnBedActive(r, b)).forEach((b) => Object.entries(LN.doc.bedSets[b.size] || {}).forEach(([k, n]) => { need[k] = (need[k] || 0) + n; }));
+  Object.entries(lnRoomTowels(r)).forEach(([k, n]) => { need[k] = (need[k] || 0) + n; });
+  return need;
+}
+
+// Every bed and every room's towels is a "place" with a set of pieces. A sofa
+// bed (only made up when the room is booked the bigger way) takes nothing.
 function lnPlaces() {
   const out = [];
   LN.doc.rooms.forEach((r, ri) => {
-    r.beds.forEach((b, bi) => out.push({ ri, bi, room: r, label: b.label, kind: 'bed', size: b.size, set: LN.doc.bedSets[b.size] || {}, state: b.state, changedAt: b.changedAt, bedId: b.id }));
-    if (Object.keys(r.towels || {}).length) out.push({ ri, bi: -1, room: r, label: 'Towels', kind: 'bath', set: r.towels, state: r.towelsState, changedAt: r.towelsChangedAt, bedId: null });
+    r.beds.forEach((b, bi) => {
+      const active = lnBedActive(r, b);
+      const hasLinen = !active && LN.doc.pieces.some((p) => p.status === 'in_use' && p.room === r.name && p.bed === b.id);
+      out.push({ ri, bi, room: r, label: b.label, kind: active ? 'bed' : 'sofa', hasLinen, size: b.size, set: active ? LN.doc.bedSets[b.size] || {} : {}, state: b.state, changedAt: b.changedAt, checkoutAt: b.checkoutAt || null, bedId: b.id });
+    });
+    if (Object.keys(r.towels || {}).length || (r.alt && Object.keys(r.alt.towels || {}).length)) {
+      out.push({ ri, bi: -1, room: r, label: 'Towels', kind: 'bath', set: lnRoomTowels(r), state: r.towelsState, changedAt: r.towelsChangedAt, bookingAt: r.alt ? r.altAt : null, bedId: null });
+    }
   });
   return out;
 }
 function lnPlaceDue(pl) {
+  if (pl.kind === 'sofa') return pl.hasLinen ? 'sofa' : '';
+  // A guest leaving comes first: the bed may already be stripped, but it still needs the guest-left change.
+  const out = [pl.checkoutAt, pl.room.checkoutAt].filter(Boolean).sort().pop();
+  if (out && (!pl.changedAt || pl.changedAt < out)) return 'checkout';
   if (pl.state !== 'made') return 'stripped';
-  if (pl.room.checkoutAt && (!pl.changedAt || pl.changedAt < pl.room.checkoutAt)) return 'checkout';
+  if (pl.bookingAt && (!pl.changedAt || pl.changedAt < pl.bookingAt)) return 'booking';
   const limit = pl.kind === 'bath' ? LN.doc.towelChangeDays : LN.doc.bedChangeDays;
   const d = lnDays(pl.changedAt);
   if (d != null && d >= limit) return 'old';
   return '';
 }
+// Stock targets count every room at its biggest booking: sofa beds made up, and the larger towel set.
 function lnNeedPerType() {
   const need = {};
-  lnPlaces().forEach((pl) => Object.entries(pl.set).forEach(([k, n]) => { need[k] = (need[k] || 0) + n; }));
+  const add = (k, n) => { need[k] = (need[k] || 0) + n; };
+  LN.doc.rooms.forEach((r) => {
+    r.beds.forEach((b) => Object.entries(LN.doc.bedSets[b.size] || {}).forEach(([k, n]) => add(k, n)));
+    const t = { ...(r.towels || {}) };
+    Object.entries((r.alt && r.alt.towels) || {}).forEach(([k, n]) => { t[k] = Math.max(t[k] || 0, n); });
+    Object.entries(t).forEach(([k, n]) => add(k, n));
+  });
   return need;
 }
 function lnCountBy(pred) {
@@ -145,7 +175,7 @@ function lnTypesInUse() {
 }
 
 // --------------------------------------------------------------- scanning ---
-function lnScanField(id, placeholder = 'Scan or type a code, then Enter') {
+function lnScanField(id, placeholder = 'Scan, or type the number and press Enter') {
   return `<div class="ln-scan"><input id="${id}" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="${placeholder}">
     <button type="button" class="secondary small" onclick="lnCamera('${id}')">📷 Camera</button></div><div id="${id}Msg" class="ln-scanmsg"></div>`;
 }
@@ -162,10 +192,17 @@ function lnBindScan(id, handler) {
   // Keep the field ready for a handheld scanner, but don't pop the phone keyboard.
   if (!_lnCam && !(window.matchMedia && matchMedia('(pointer: coarse)').matches)) setTimeout(() => el.focus(), 30);
 }
+// A label's code from whatever was scanned or typed: a QR may hold text around
+// the code, and people type just the number ("42" means L00042).
+function lnCode(text) {
+  const s = String(text || '').trim().toUpperCase();
+  const m = s.match(/L\d{5,}/);
+  if (m) return m[0];
+  const n = s.match(/^L?0*(\d+)$/);
+  return n ? 'L' + n[1].padStart(5, '0') : s;
+}
 function lnHandleCode(id, code) {
-  // A QR may hold a URL or text around the code; take the code out of it.
-  const m = String(code).toUpperCase().match(/L\d{5,}/);
-  const c = m ? m[0] : String(code).toUpperCase();
+  const c = lnCode(code);
   let res;
   try { res = LN.scan[id](c); } catch (e) { res = { err: e.message }; }
   const msg = document.getElementById(id + 'Msg'); // after the handler: it may have redrawn the modal
@@ -255,33 +292,66 @@ window.lnCameraStop = () => {
 
 // ----------------------------------------------------------------- labels ---
 // Opens a printable sheet of QR labels: code, item and property name.
+// ------------------------------------------------------- printed material ---
+// Labels and door cards follow the somewhere nice brand manual: sandy cream
+// (#FFF8ED) and logo brown (#5d3f15), Prata for headlines, Roboto for text, the
+// cream ribbon with a notched end, and the logo itself never recoloured or
+// printed under 2.5 cm across (so it goes on door cards, not the small labels).
+const LN_BRAND = { sandy: '#FFF8ED', brown: '#5d3f15', rule: '#eadcc3', grey: '#4B4B4B', ink: '#262626', light: '#F6F6F6' };
+function lnQr(text, px) {
+  if (!window.QRCode) return '';
+  const tmp = document.createElement('div');
+  new QRCode(tmp, { text, width: px, height: px, colorDark: LN_BRAND.brown, colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M });
+  const cvs = tmp.querySelector('canvas');
+  return cvs ? cvs.toDataURL('image/png') : '';
+}
+function lnPrintWindow(title, css, note, body) {
+  const w = window.open('', '_blank');
+  if (!w) { alert('Allow pop-ups for this site to print.'); return; }
+  const b = LN_BRAND;
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Prata&family=Roboto:wght@300;400;500&display=swap">
+  <style>
+    @page { margin: 8mm; }
+    * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body { margin: 0; font-family: Roboto, "Helvetica Neue", Arial, sans-serif; font-weight: 300; color: ${b.ink}; }
+    .prata { font-family: Prata, Georgia, "Times New Roman", serif; font-weight: 400; }
+    .note { font-size: 10pt; color: ${b.grey}; margin: 0 0 6mm; }
+    .note b { font-family: Prata, Georgia, serif; font-weight: 400; font-size: 14pt; color: ${b.ink}; display: block; margin-bottom: 1mm; }
+    @media print { .note { display: none; } }
+    ${css}
+  </style></head><body><div class="note">${note}</div>${body}
+  <script>window.onload=function(){(document.fonts&&document.fonts.ready?document.fonts.ready:Promise.resolve()).then(function(){setTimeout(function(){window.print()},300)})}<\/script></body></html>`);
+  w.document.close();
+}
+
+// Linen labels: the number big (what staff type), the item's picture and colour,
+// the QR, and the hostel's name in Prata.
 function lnPrintLabels(codes) {
   if (!codes.length) return;
-  const w = window.open('', '_blank');
-  if (!w) return alert('Allow pop-ups for this site to print labels.');
-  const tmp = document.createElement('div');
+  const name = state.settings?.hostelName || '';
   const labels = codes.map((c) => {
     const p = lnPiece(c);
-    let src = '';
-    if (window.QRCode) {
-      tmp.innerHTML = '';
-      new QRCode(tmp, { text: c, width: 160, height: 160, correctLevel: QRCode.CorrectLevel.M });
-      const cvs = tmp.querySelector('canvas');
-      src = cvs ? cvs.toDataURL('image/png') : '';
-    }
-    return `<div class="l" style="border-left:3mm solid ${p ? lnColor(p.typeId) : '#999'}"><img src="${src}" alt=""><div><b>${c}</b><span>${p ? lnPic(p.typeId, 22) : ''} ${esc(p ? lnTypeName(p.typeId) : '')}</span><small>${esc(state.settings?.hostelName || '')}</small></div></div>`;
+    const col = p ? lnColor(p.typeId) : LN_BRAND.grey;
+    return `<div class="l" style="--item:${col}">
+      <img class="qr" src="${lnQr(c, 200)}" alt="">
+      <div class="t"><div class="no">No. ${Number(c.slice(1))}</div>
+        <div class="it">${p ? lnPic(p.typeId, 20) : ''}<span>${esc(p ? lnTypeName(p.typeId) : '')}</span></div>
+        <div class="ft"><span class="prata">${esc(name)}</span><span class="cd">${c}</span></div></div></div>`;
   }).join('');
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Linen labels</title><style>
-    body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:8mm}
-    .g{display:grid;grid-template-columns:repeat(3,1fr);gap:4mm}
-    .l{display:flex;gap:3mm;align-items:center;border:1px dashed #bbb;border-radius:2mm;padding:2.5mm;break-inside:avoid}
-    .l img{width:22mm;height:22mm}
-    .l b{display:block;font-size:15pt;letter-spacing:.5pt;font-family:ui-monospace,Menlo,monospace}
-    .l span{display:flex;align-items:center;gap:1mm;font-size:9pt}.l small{display:block;font-size:7pt;color:#666}
-    p{font-size:10pt;color:#555}@media print{p{display:none}}
-  </style></head><body><p>${codes.length} label(s). Print on sticker paper, or on paper and sew/iron into a corner of each piece. Use wash-proof labels for linen.</p>
-  <div class="g">${labels}</div><script>setTimeout(function(){window.print()},400)<\/script></body></html>`);
-  w.document.close();
+  const b = LN_BRAND;
+  lnPrintWindow('Linen labels', `
+    .g { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4mm; }
+    .l { display: grid; grid-template-columns: 22mm 1fr; gap: 3mm; align-items: center; background: ${b.sandy}; border: .3mm solid ${b.rule}; border-left: 3mm solid var(--item); border-radius: 2mm; padding: 2.5mm 3mm; break-inside: avoid; }
+    .qr { width: 22mm; height: 22mm; background: #fff; padding: .8mm; border-radius: 1mm; display: block; }
+    .t { min-width: 0; }
+    .no { font-weight: 500; font-size: 17pt; line-height: 1.05; color: ${b.ink}; letter-spacing: .2pt; }
+    .it { display: flex; align-items: center; gap: 1.2mm; font-weight: 400; font-size: 9pt; color: #323232; margin-top: .6mm; }
+    .ft { display: flex; justify-content: space-between; align-items: baseline; gap: 2mm; margin-top: 1.2mm; padding-top: 1mm; border-top: .3mm solid ${b.rule}; }
+    .ft .prata { font-size: 8pt; color: ${b.brown}; white-space: nowrap; }
+    .ft .cd { font-size: 6.5pt; color: ${b.grey}; }
+  `, `<b>Linen labels</b>${codes.length} label(s). Print on wash-proof label stock, or on fabric labels to sew or iron into a corner of each piece.`,
+  `<div class="g">${labels}</div>`);
 }
 window.lnPrintCodes = (codes) => lnPrintLabels(codes);
 
@@ -290,27 +360,30 @@ window.lnPrintCodes = (codes) => lnPrintLabels(codes);
 window.lnPrintRoomCards = () => {
   const rooms = LN.doc.rooms;
   if (!rooms.length) return alert('Add rooms first.');
-  const w = window.open('', '_blank');
-  if (!w) return alert('Allow pop-ups for this site to print room cards.');
-  const tmp = document.createElement('div');
-  const cards = rooms.map((r) => {
-    let src = '';
-    if (window.QRCode) {
-      tmp.innerHTML = '';
-      new QRCode(tmp, { text: 'ROOM:' + r.name, width: 240, height: 240, correctLevel: QRCode.CorrectLevel.M });
-      const cvs = tmp.querySelector('canvas'); src = cvs ? cvs.toDataURL('image/png') : '';
-    }
-    return `<div class="c"><img src="${src}" alt=""><b>${esc(r.name)}</b><span>Scan to open this room</span></div>`;
-  }).join('');
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Room cards</title><style>
-    body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:10mm}
-    .g{display:grid;grid-template-columns:repeat(2,1fr);gap:8mm}
-    .c{border:1px dashed #bbb;border-radius:4mm;padding:6mm;text-align:center;break-inside:avoid}
-    .c img{width:50mm;height:50mm}.c b{display:block;font-size:24pt;margin-top:3mm}.c span{font-size:11pt;color:#555}
-    p{font-size:10pt;color:#555}@media print{p{display:none}}
-  </style></head><body><p>Stick one on each room door, and one inside each linen cupboard.</p><div class="g">${cards}</div>
-  <script>setTimeout(function(){window.print()},400)<\/script></body></html>`);
-  w.document.close();
+  const logo = state.settings?.logoDataUrl || '';
+  const name = state.settings?.hostelName || '';
+  const cards = rooms.map((r) => `<div class="c">
+      <div class="top">${logo ? `<img class="logo" src="${logo}" alt="${esc(name)}">` : `<div class="word prata">${esc(name)}</div>`}</div>
+      <div class="rib prata">${esc(r.name)}</div>
+      <img class="qr" src="${lnQr('ROOM:' + r.name, 320)}" alt="">
+      <div class="how">Housekeeping: scan to open this room</div>
+      <div class="foot"><span>${r.beds.length} bed${r.beds.length === 1 ? '' : 's'}${r.cupboard ? ' · linen cupboard' : ''}</span><span class="prata">${esc(name)}</span></div>
+    </div>`).join('');
+  const b = LN_BRAND;
+  lnPrintWindow('Room door cards', `
+    .g { display: flex; flex-wrap: wrap; gap: 6mm; }
+    .c { width: calc(50% - 3mm); background: #fff; border: .4mm solid ${b.rule}; border-radius: 4mm; padding: 6mm 0 5mm; text-align: center; break-inside: avoid; display: flex; flex-direction: column; align-items: center; gap: 4mm; overflow: hidden; }
+    .top { height: 30mm; display: flex; align-items: center; justify-content: center; }
+    .logo { width: 30mm; height: 30mm; object-fit: contain; } /* manual: never under 2.5 cm */
+    .word { font-size: 18pt; color: ${b.brown}; }
+    .rib { align-self: flex-start; background: ${b.sandy}; color: ${b.ink}; font-size: 24pt; line-height: 1.1; padding: 3mm 14mm 3mm 10mm; border-top: .5mm solid ${b.rule}; border-bottom: .5mm solid ${b.rule};
+      clip-path: polygon(0 0, 100% 0, calc(100% - 5mm) 50%, 100% 100%, 0 100%); max-width: 92%; overflow-wrap: anywhere; text-align: left; }
+    .qr { width: 50mm; height: 50mm; display: block; }
+    .how { font-size: 10.5pt; color: ${b.grey}; }
+    .foot { align-self: stretch; margin: 0 8mm; padding-top: 2.5mm; border-top: .4mm solid ${b.sandy}; display: flex; justify-content: space-between; font-size: 8pt; color: ${b.grey}; }
+    .foot .prata { color: ${b.brown}; font-size: 9pt; }
+  `, `<b>Room door cards</b>Stick one on each room door, and one inside each linen cupboard.${logo ? '' : ' Upload your logo in Settings to have it printed on the cards.'}`,
+  `<div class="g">${cards}</div>`);
 };
 
 // ------------------------------------------------------------- needs checking ---
@@ -419,9 +492,11 @@ function lnAlerts() {
   if (dmgToCheck.length && can('linenManage')) a.push({ level: 'warn', title: `${dmgToCheck.length} damaged piece(s) to check`, text: 'Reported by staff. Confirm, or put back in use.', action: "lnGo('review')", label: 'Check them' });
   d.batches.filter((b) => b.status === 'washing' && lnHours(b.sentAt) >= d.washAlertHours).forEach((b) =>
     a.push({ level: 'warn', title: `${b.number} has been in the wash ${Math.floor(lnHours(b.sentAt))} hours`, text: `${b.codes.length} pieces sent ${fmt(b.sentAt)} by ${b.sentBy}.`, action: can('linenWash') ? `lnOpenReceive('${b.id}')` : '', label: 'Receive' }));
-  const checkouts = d.rooms.filter((r) => r.checkoutAt);
-  if (checkouts.length) a.push({ level: 'warn', title: `Checked out: ${checkouts.map((r) => r.name).join(', ')}`, text: 'Change the beds and towels in these rooms.', action: "lnRoomsFilter('checkout')", label: 'Open rooms' });
-  const stripped = places.filter((pl) => pl.state !== 'made');
+  const left = places.filter((pl) => lnPlaceDue(pl) === 'checkout');
+  if (left.length) a.push({ level: 'warn', title: `Guests left: ${left.length} bed(s)/bathroom(s) to change`, text: left.slice(0, 8).map((pl) => `${pl.room.name} ${pl.label}`).join(', ') + (left.length > 8 ? '…' : ''), action: "lnRoomsFilter('checkout')", label: 'Open rooms' });
+  const rebook = places.filter((pl) => ['sofa', 'booking'].includes(lnPlaceDue(pl)));
+  if (rebook.length) a.push({ level: 'warn', title: `Booking changed: ${[...new Set(rebook.map((pl) => `${pl.room.name} (now ${lnBookedAs(pl.room)})`))].join(', ')}`, text: rebook.map((pl) => `${pl.room.name} ${pl.label}: ${lnPlaceDue(pl) === 'sofa' ? 'make it a sofa' : 'change'}`).join(', '), action: "lnRoomsFilter('due')", label: 'Open rooms' });
+  const stripped = places.filter((pl) => pl.kind !== 'sofa' && pl.state !== 'made');
   if (stripped.length) a.push({ level: 'warn', title: `${stripped.length} bed(s)/bathroom(s) not made up`, text: stripped.slice(0, 6).map((pl) => `${pl.room.name} ${pl.label}`).join(', ') + (stripped.length > 6 ? '…' : ''), action: "lnRoomsFilter('due')", label: 'Open rooms' });
   const old = places.filter((pl) => lnPlaceDue(pl) === 'old');
   if (old.length) a.push({ level: 'info', title: `${old.length} due a routine change`, text: `Beds after ${d.bedChangeDays} day(s), towels after ${d.towelChangeDays} day(s).`, action: "lnRoomsFilter('due')", label: 'Open rooms' });
@@ -442,31 +517,49 @@ function lnRooms(v) {
   const places = lnPlaces();
   const clean = (room) => d.pieces.filter((p) => p.status === 'clean' && p.loc === room).length;
   v.innerHTML = `
-    <div class="ln-head"><div><h2>Rooms</h2><p class="hint">${can('linenUse') ? 'Tap a bed or towels to change them.' : 'Mark a room checked out and housekeeping sees it straight away.'}</p></div>
+    <div class="ln-head"><div><h2>Rooms</h2><p class="hint">${[can('linenUse') ? 'Tap a bed or towels to change them.' : '', can('linenCheckout') ? 'When a guest leaves, tap <b>Guest left</b> under their bed (or <b>Whole room checked out</b> for a private room). Housekeeping sees it straight away.' : ''].filter(Boolean).join(' ')}</p></div>
       <div class="ln-filters">${[['all', 'All'], ['due', 'Due a change'], ['checkout', 'Checked out']].map(([k, l]) => `<button class="small ${f === k ? '' : 'secondary'}" onclick="lnRoomsFilter('${k}')">${l}</button>`).join('')}</div></div>
     <div class="ln-rooms">${d.rooms.map((r, ri) => {
       let pls = places.filter((pl) => pl.ri === ri);
       if (f === 'due') pls = pls.filter(lnPlaceDue);
-      if (f === 'checkout' && !r.checkoutAt) return '';
+      if (f === 'checkout') pls = pls.filter((pl) => lnPlaceDue(pl) === 'checkout');
       if (!pls.length && f !== 'all') return '';
       return `<div class="ln-room">
-        <div class="ln-room-h"><b>${esc(r.name)}</b>${r.checkoutAt ? `<span class="ln-tag ln-amber">Checked out ${fmt(r.checkoutAt)}</span>` : ''}</div>
+        <div class="ln-room-h"><b>${esc(r.name)}</b>${(() => { const n = places.filter((pl) => pl.ri === ri && lnPlaceDue(pl) === 'checkout').length; return n ? `<span class="ln-tag ln-amber">Guest left · ${n} to change</span>` : ''; })()}</div>
         <div class="muted" style="font-size:12px;margin:2px 0 8px">${r.beds.length} bed(s)${r.cupboard ? ` · cupboard: ${clean(r.name)} clean` : ''}</div>
+        ${r.alt ? (can('linenCheckout')
+          ? `<div class="ln-book"><span>Booked as</span>${[[false, r.alt.mainName], [true, r.alt.name]].map(([v, l]) => `<button class="${!!r.altOn === v ? 'on' : ''}" onclick="lnBooking(${ri},${v})">${esc(l)}</button>`).join('')}</div>`
+          : `<div class="ln-book"><span>Booked as</span><b>${esc(lnBookedAs(r))}</b></div>`) : ''}
         <div class="ln-places">${pls.map((pl) => {
           const due = lnPlaceDue(pl);
           const cls = due === 'stripped' ? 'ln-pl-bad' : due ? 'ln-pl-due' : '';
-          const st = due === 'stripped' ? 'Not made up' : due === 'checkout' ? 'Checkout: change' : pl.changedAt ? (lnDays(pl.changedAt) === 0 ? 'Changed today' : `${lnDays(pl.changedAt)} day(s) ago`) : 'Made';
-          return `<button class="ln-place ${cls}" onclick="lnOpenChange(${pl.ri},${pl.bi})" ${can('linenUse') ? '' : 'disabled'}><b>${esc(pl.label)}</b><span>${pl.kind === 'bed' ? esc(pl.size) + ' · ' : ''}${st}</span></button>`;
+          const st = pl.kind === 'sofa' ? (due ? 'Make it a sofa: take the linen off' : 'Sofa')
+            : due === 'stripped' ? 'Not made up' : due === 'checkout' ? 'Guest left: change' : due === 'booking' ? `Now ${esc(lnBookedAs(r))}: change` : pl.changedAt ? (lnDays(pl.changedAt) === 0 ? 'Changed today' : `${lnDays(pl.changedAt)} day(s) ago`) : 'Made';
+          const tile = `<button class="ln-place ${cls}" onclick="lnOpenChange(${pl.ri},${pl.bi})" ${can('linenUse') && (pl.kind !== 'sofa' || due) ? '' : 'disabled'}><b>${esc(pl.label)}</b><span>${pl.kind !== 'bath' ? esc(pl.size) + ' · ' : ''}${st}</span></button>`;
+          // Reception marks each bed's guest as gone: dorms check out bed by bed.
+          const gl = !can('linenCheckout') || pl.kind !== 'bed' || (r.beds[pl.bi] || {}).altOnly ? ''
+            : due === 'checkout' ? '<span class="ln-gl ln-gl-done">Guest left ✓</span>'
+            : `<button class="ln-gl" onclick="lnCheckout(${pl.ri},${pl.bi})">Guest left</button>`;
+          return gl ? `<div class="ln-pl-wrap">${tile}${gl}</div>` : tile;
         }).join('')}</div>
-        ${can('linenCheckout') && !r.checkoutAt ? `<button class="small secondary" style="margin-top:10px" onclick="lnCheckout(${ri})">Mark checked out</button>` : ''}
+        ${can('linenCheckout') && places.some((pl) => pl.ri === ri && lnPlaceDue(pl) !== 'checkout') ? `<button class="small secondary" style="margin-top:10px" onclick="lnCheckout(${ri})">Whole room checked out</button>` : ''}
       </div>`;
     }).join('') || '<p class="muted">Nothing here.</p>'}</div>
-    <div class="ln-legend"><span><i style="background:#fdf1e1;border:1px solid var(--warn)"></i>Due: checkout or ${d.bedChangeDays}+ days (towels ${d.towelChangeDays}+)</span><span><i style="background:#fdeaea;border:1px solid var(--danger)"></i>Not made up</span></div>`;
+    <div class="ln-legend"><span><i style="background:#fdf1e1;border:1px solid var(--warn)"></i>Due: guest left, or ${d.bedChangeDays}+ days (towels ${d.towelChangeDays}+)</span><span><i style="background:#fdeaea;border:1px solid var(--danger)"></i>Not made up</span></div>`;
 }
-window.lnCheckout = async (ri) => {
+window.lnBooking = async (ri, alt) => {
   const r = LN.doc.rooms[ri];
-  if (!confirm(`Mark ${r.name} as checked out? Housekeeping will see its beds and towels as due a change.`)) return;
-  try { await api('POST', '/linen/checkout', { room: r.name }); await lnReload(); } catch (e) { alert(e.message); }
+  if (!!r.altOn === alt) return;
+  const to = alt ? r.alt.name : r.alt.mainName;
+  if (!confirm(`${r.name} booked as ${to}? Housekeeping will ${alt ? 'make up the extra bed and towels' : 'turn the extra bed back into a sofa'}.`)) return;
+  try { await api('POST', '/linen/booking', { room: r.name, alt }); await lnReload(); } catch (e) { alert(e.message); }
+};
+window.lnCheckout = async (ri, bi) => {
+  const r = LN.doc.rooms[ri];
+  const b = bi != null && bi >= 0 ? r.beds[bi] : null;
+  const what = b ? `${r.name} ${b.label}: the guest left? Housekeeping will see this bed as due a change.` : `Whole room ${r.name} checked out? Housekeeping will see all its beds and towels as due a change.`;
+  if (!confirm(what)) return;
+  try { await api('POST', '/linen/checkout', { room: r.name, bed: b ? b.id : null }); await lnReload(); } catch (e) { alert(e.message); }
 };
 
 // Change a bed (bi ≥ 0) or a room's towels (bi = -1).
@@ -474,7 +567,7 @@ window.lnOpenChange = (ri, bi) => {
   if (!can('linenUse')) return;
   const r = LN.doc.rooms[ri];
   const bed = bi >= 0 ? r.beds[bi] : null;
-  const set = bed ? (LN.doc.bedSets[bed.size] || {}) : r.towels;
+  const set = (lnPlaces().find((pl) => pl.ri === ri && pl.bi === bi) || { set: {} }).set;
   const current = LN.doc.pieces.filter((p) => p.status === 'in_use' && p.room === r.name && (p.bed || null) === (bed ? bed.id : null));
   LN.chg = { room: r.name, bed: bed ? bed.id : null, title: `${r.name} · ${bed ? bed.label + ' · ' + bed.size : 'Towels'}`, set, current: current.map((p) => ({ code: p.code, typeId: p.typeId, mode: 'off' })), on: [] };
   lnDrawChange();
@@ -671,8 +764,7 @@ function lnStock(v) {
   const room = d.rooms.find((r) => r.name === LN.loc);
   const want = {};
   if (room) {
-    room.beds.forEach((b) => Object.entries(d.bedSets[b.size] || {}).forEach(([k, n]) => { want[k] = (want[k] || 0) + n; }));
-    Object.entries(room.towels || {}).forEach(([k, n]) => { want[k] = (want[k] || 0) + n; });
+    Object.assign(want, lnRoomChange(room));
   }
   const types = [...new Set([...Object.keys(by), ...Object.keys(want)])];
   const lastCount = d.log.slice().reverse().find((l) => l.action === `Counted ${LN.loc === 'store' ? 'the storeroom' : 'the ' + LN.loc + ' cupboard'}`);
@@ -760,8 +852,7 @@ window.lnMovePick = () => {
   const m = LN.mv, d = LN.doc;
   const room = d.rooms.find((r) => r.name === m.to);
   const want = {};
-  room.beds.forEach((b) => Object.entries(d.bedSets[b.size] || {}).forEach(([k, n]) => { want[k] = (want[k] || 0) + n; }));
-  Object.entries(room.towels || {}).forEach(([k, n]) => { want[k] = (want[k] || 0) + n; });
+  Object.assign(want, lnRoomChange(room));
   const have = lnCountBy((p) => p.status === 'clean' && p.loc === m.to);
   m.codes.forEach((c) => { const t = lnPiece(c).typeId; have[t] = (have[t] || 0) + 1; });
   Object.entries(want).forEach(([k, n]) => {
@@ -1027,16 +1118,27 @@ function lnSetup(v) {
           <div class="toolbar"><div><label>Room name</label><input value="${esc(r.name)}" oninput="LN.draft.rooms[${ri}].name=this.value"></div>
             <label class="ln-cb" style="align-self:flex-end;margin-bottom:10px"><input type="checkbox" ${r.cupboard ? 'checked' : ''} onchange="LN.draft.rooms[${ri}].cupboard=this.checked"> Has a cupboard</label>
             <button class="small danger" onclick="LN.draft.rooms.splice(${ri},1);lnGo('setup')">Remove room</button></div>
+          <label class="ln-cb" style="margin:10px 0 0"><input type="checkbox" ${r.alt ? 'checked' : ''} onchange="lnToggleAlt(${ri},this.checked)"> Can also be booked another way (e.g. as a Triple, with an extra bed)</label>
+          ${r.alt ? `<div class="toolbar" style="margin-top:4px"><div><label>Usually booked as</label><input value="${esc(r.alt.mainName)}" oninput="LN.draft.rooms[${ri}].alt.mainName=this.value" placeholder="e.g. Double"></div>
+            <div><label>Or booked as</label><input value="${esc(r.alt.name)}" oninput="LN.draft.rooms[${ri}].alt.name=this.value" placeholder="e.g. Triple"></div></div>` : ''}
           <label>Beds</label>
           ${r.beds.map((b, bi) => `<div class="ln-bedrow"><input value="${esc(b.label)}" oninput="LN.draft.rooms[${ri}].beds[${bi}].label=this.value" placeholder="e.g. Bed 1">
             <select onchange="LN.draft.rooms[${ri}].beds[${bi}].size=this.value">${g.bedSizes.map((z) => `<option value="${esc(z.name)}" ${b.size === z.name ? 'selected' : ''}>${esc(z.name)}</option>`).join('')}</select>
+            ${r.alt ? `<label class="ln-cb ln-sofa"><input type="checkbox" ${b.altOnly ? 'checked' : ''} onchange="LN.draft.rooms[${ri}].beds[${bi}].altOnly=this.checked"> Sofa unless ${esc(r.alt.name || 'booked the other way')}</label>` : ''}
             <button class="small ghost" onclick="LN.draft.rooms[${ri}].beds.splice(${bi},1);lnGo('setup')" aria-label="Remove bed">✕</button></div>`).join('')}
           <button class="small secondary" onclick="LN.draft.rooms[${ri}].beds.push({label:'Bed ${r.beds.length + 1}',size:lnDefaultSize()});lnGo('setup')">+ Bed</button>
-          ${bathTypes.length ? `<label>Towels for the room</label><div class="ln-towels">${bathTypes.map((t) => `<span><input type="number" min="0" max="20" value="${(r.towels || {})[t.id] || 0}" oninput="lnSetQty(LN.draft.rooms[${ri}],'towels','${t.id}',this.value)"> ${esc(t.name)}</span>`).join('')}</div>` : ''}
+          ${bathTypes.length ? `<label>Towels for the room${r.alt ? ` when booked as ${esc(r.alt.mainName || 'usual')}` : ''}</label><div class="ln-towels">${bathTypes.map((t) => `<span><input type="number" min="0" max="20" value="${(r.towels || {})[t.id] || 0}" oninput="lnSetQty(LN.draft.rooms[${ri}],'towels','${t.id}',this.value)"> ${esc(t.name)}</span>`).join('')}</div>` : ''}
+          ${bathTypes.length && r.alt ? `<label>Towels when booked as ${esc(r.alt.name || 'the other way')}</label><div class="ln-towels">${bathTypes.map((t) => `<span><input type="number" min="0" max="20" value="${(r.alt.towels || {})[t.id] || 0}" oninput="lnSetQty(LN.draft.rooms[${ri}].alt,'towels','${t.id}',this.value)"> ${esc(t.name)}</span>`).join('')}</div>` : ''}
         </div>`).join('')}</div>
       <button class="small secondary" style="margin-top:10px" onclick="LN.draft.rooms.push({name:'',cupboard:false,beds:[{label:'Bed 1',size:lnDefaultSize()}],towels:{}});lnGo('setup')">+ Add room</button></div>
     <div class="ln-savebar"><button class="secondary" onclick="LN.draft=null;lnGo('setup')">Undo changes</button><button onclick="lnSaveSetup()">Save setup</button></div>`;
 }
+window.lnToggleAlt = (ri, on) => {
+  const r = LN.draft.rooms[ri];
+  r.alt = on ? { mainName: 'Double', name: 'Triple', towels: { ...(r.towels || {}) } } : null;
+  if (!on) r.beds.forEach((b) => { b.altOnly = false; });
+  lnGo('setup');
+};
 window.lnSetQty = (obj, key, typeId, val) => { obj[key] = obj[key] || {}; const n = Math.max(0, Math.round(+val || 0)); if (n) obj[key][typeId] = n; else delete obj[key][typeId]; };
 // Bed sizes are the admin's own list. A rename moves every bed of that size with it.
 window.lnDefaultSize = () => { const z = LN.draft.bedSizes; return (z.find((x) => x.name === 'Double') || z[0] || { name: '' }).name; };

@@ -100,6 +100,21 @@ try {
   r = await api('POST', '/api/linen/change', { headers: hk, body: { room: 'Duafe', bed: bed1, off: [sheets[2]], keep: [sheets[2]] } });
   ok('a piece cannot both come off and stay', r.status === 400);
 
+  section('Dorm beds check out one by one');
+  doc = (await api('GET', '/api/linen', { headers: A })).body;
+  const bed2 = doc.rooms[0].beds[1];
+  r = await api('POST', '/api/linen/checkout', { headers: cs, body: { room: 'Duafe', bed: bed2.id } });
+  doc = (await api('GET', '/api/linen', { headers: A })).body;
+  ok('reception marks one bed\'s guest as gone', r.status === 200 && !!doc.rooms[0].beds[1].checkoutAt && !doc.rooms[0].beds[0].checkoutAt && !doc.rooms[0].checkoutAt);
+  r = await api('POST', '/api/linen/checkout', { headers: cs, body: { room: 'Duafe', bed: 'bed_nope' } });
+  ok('an unknown bed is refused', r.status === 404);
+  r = await api('POST', '/api/linen/checkout', { headers: hk, body: { room: 'Duafe', bed: bed2.id } });
+  ok('housekeeping cannot mark checkouts', r.status === 403);
+  const onBed2 = doc.pieces.filter((p) => p.status === 'in_use' && p.bed === bed2.id).map((p) => p.code);
+  r = await api('POST', '/api/linen/change', { headers: hk, body: { room: 'Duafe', bed: bed2.id, off: onBed2 } });
+  doc = (await api('GET', '/api/linen', { headers: A })).body;
+  ok('stripping that bed clears its guest-left mark', r.status === 200 && doc.rooms[0].beds[1].checkoutAt === null && doc.rooms[0].beds[1].state === 'stripped');
+
   section('Wash: send, receive short, resolve');
   r = await api('POST', '/api/linen/wash', { headers: hk, body: { codes: [sheets[0]] } });
   ok('housekeeping cannot send to the wash', r.status === 403);
@@ -164,6 +179,13 @@ try {
   r = await api('POST', '/api/linen/count', { headers: hk, body: { loc: 'store', codes: [sheets[7]], note: 'x' } });
   ok('a retired piece scanned in a count is flagged', r.status === 400 && /out of stock/.test(r.body.error));
 
+  section('Just the number works');
+  r = await api('GET', '/api/linen/piece/3', { headers: hk });
+  ok('"3" finds L00003', r.status === 200 && r.body.piece.code === 'L00003', JSON.stringify(r.body).slice(0, 120));
+  r = await api('POST', '/api/linen/move', { headers: hk, body: { codes: ['10'], to: 'Akoma' } });
+  ok('moves and scans accept the number alone', r.status === 200 || r.status === 400, JSON.stringify(r.body));
+  ok('…and it was read as L00010', r.status === 200 || !/No piece/.test(r.body.error || ''));
+
   section('Piece history');
   r = await api('GET', `/api/linen/piece/${sheets[0].toLowerCase()}`, { headers: hk });
   ok('lookup is case-insensitive and lists the moves', r.status === 200 && r.body.piece.code === sheets[0] && r.body.history.length >= 4, JSON.stringify(r.body).slice(0, 300));
@@ -204,9 +226,35 @@ try {
   r = await api('PUT', '/api/linen/setup', { headers: A, body: { rooms: [{ name: 'Akoma', originalName: 'Akoma', cupboard: true, beds: [{ label: 'Bed', size: 'Futon' }], towels: {} }, ...doc.rooms.filter((x) => x.name !== 'Akoma').map((x) => ({ ...x, originalName: x.name }))] } });
   ok('a bed must use one of the sizes', r.status === 400 && /Futon/.test(r.body.error));
 
+  section('A room booked as Double or Triple');
+  doc = (await api('GET', '/api/linen', { headers: A })).body;
+  const sizes = Object.keys(doc.bedSets);
+  const keepRooms = doc.rooms.map((x) => ({ ...x, originalName: x.name }));
+  r = await api('PUT', '/api/linen/setup', { headers: A, body: { rooms: [...keepRooms, {
+    name: 'Mframadan', beds: [{ label: 'Bed 1', size: sizes[0] }, { label: 'Extra bed', size: sizes[0], altOnly: true }],
+    towels: { btowel: 2 }, alt: { mainName: 'Double', name: 'Triple', towels: { btowel: 3 } },
+  }] } });
+  const mf = r.body.rooms && r.body.rooms.find((x) => x.name === 'Mframadan');
+  ok('a room can have a second booking with its own towels and a sofa bed', r.status === 200 && mf.alt.name === 'Triple' && mf.alt.towels.btowel === 3 && mf.beds[1].altOnly === true && mf.altOn === false, JSON.stringify(mf));
+  const extra = mf.beds[1].id;
+  const triple = (await api('POST', '/api/linen/pieces', { headers: A, body: { typeId: 'pcase', qty: 1 } })).body.codes;
+  r = await api('POST', '/api/linen/change', { headers: hk, body: { room: 'Mframadan', bed: extra, on: triple } });
+  ok('nothing goes on the sofa bed while the room is booked as Double', r.status === 400 && /sofa/.test(r.body.error), JSON.stringify(r.body));
+  r = await api('POST', '/api/linen/booking', { headers: hk, body: { room: 'Mframadan', alt: true } });
+  ok('housekeeping cannot change the booking', r.status === 403);
+  r = await api('POST', '/api/linen/booking', { headers: cs, body: { room: 'Mframadan', alt: true } });
+  doc = (await api('GET', '/api/linen', { headers: A })).body;
+  ok('reception books it as Triple at check-in', r.status === 200 && doc.rooms.find((x) => x.name === 'Mframadan').altOn === true && !!doc.rooms.find((x) => x.name === 'Mframadan').altAt);
+  r = await api('POST', '/api/linen/change', { headers: hk, body: { room: 'Mframadan', bed: extra, on: triple } });
+  ok('as a Triple, the extra bed can be made up', r.status === 200);
+  r = await api('POST', '/api/linen/booking', { headers: cs, body: { room: 'Duafe Dorm', alt: true } });
+  ok('a room with one way to be booked refuses', r.status === 400);
+  r = await api('PUT', '/api/linen/setup', { headers: A, body: { rooms: doc.rooms.map((x) => ({ ...x, originalName: x.name })) } });
+  ok('saving setup keeps the booking and the sofa bed', r.status === 200 && r.body.rooms.find((x) => x.name === 'Mframadan').altOn === true && r.body.rooms.find((x) => x.name === 'Mframadan').beds[1].altOnly === true);
+
   section('Backup includes linen');
   r = await api('GET', '/api/backup', { headers: A });
-  ok('backup carries the linen document', r.status === 200 && r.body.linen && r.body.linen.pieces.length === 13, `pieces ${r.body.linen && r.body.linen.pieces.length}`);
+  ok('backup carries the linen document', r.status === 200 && r.body.linen && r.body.linen.pieces.length === 14, `pieces ${r.body.linen && r.body.linen.pieces.length}`);
 } catch (err) {
   fail++; out.push(`\n💥 ${err.stack || err}`);
 }

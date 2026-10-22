@@ -280,6 +280,7 @@ export async function handleRequest({ method, path, query = {}, body = {}, heade
       if (m === 'PUT' && sub === 'setup') { const u = await requirePerm(headers, 'linenManage'); return json(200, await Linen.saveLinenSetup(body, u)); }
       if (m === 'POST' && sub === 'pieces') { const u = await requirePerm(headers, 'linenManage'); return json(201, await Linen.addPieces(body, u)); }
       if (m === 'POST' && sub === 'change') { const u = await requirePerm(headers, 'linenUse'); return json(200, await Linen.changePlace(body, u)); }
+      if (m === 'POST' && sub === 'booking') { const u = await requirePerm(headers, 'linenCheckout'); return json(200, await Linen.setBooking(body, u)); }
       if (m === 'POST' && sub === 'checkout') { const u = await requirePerm(headers, 'linenCheckout'); return json(200, await Linen.markCheckout(body, u)); }
       if (m === 'POST' && sub === 'wash') { const u = await requirePerm(headers, 'linenWash'); return json(201, await Linen.sendToWash(body, u)); }
       if (m === 'POST' && sub === 'batches' && parts[2] && parts[3] === 'receive') { const u = await requirePerm(headers, 'linenWash'); return json(200, await Linen.receiveBatch(parts[2], body, u)); }

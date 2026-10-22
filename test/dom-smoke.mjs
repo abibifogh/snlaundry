@@ -166,6 +166,7 @@ try {
   ok('overview flags the bed that is not made up', /not made up/.test(lv.textContent));
   w.lnGo('rooms'); await sleep(80);
   ok('rooms view lists Akoma with its bed and towels', /Akoma/.test(w.document.querySelector('#lnView').textContent) && w.document.querySelectorAll('.ln-place').length === 2);
+  ok('each bed has its own Guest left button, plus Whole room checked out', w.document.querySelectorAll('.ln-gl').length === 1 && /Whole room checked out/.test(w.document.querySelector('#lnView').textContent));
   w.lnOpenChange(0, 0); await sleep(20);
   const scan = (code) => { const el = w.document.querySelector('#chgScan'); el.value = code; el.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter' })); };
   scan(added.body.codes[0].toLowerCase());
@@ -229,6 +230,17 @@ try {
   const cleanPc = ld.pieces.filter(p => p.status === 'clean' && p.typeId === 'pcase').map(p => p.code);
   w.lsScan(clean[0]); w.lsScan(clean[1]); w.lsScan(cleanPc[0]); await sleep(10);
   ok('Done lights up once the set is scanned', !w.document.querySelector('#lsFoot .ls-big').disabled);
+  w.lsType(); await sleep(20);
+  ok('Type the number opens a number pad that suggests what is on this bed first', w.document.querySelector('#lsTypeIn').getAttribute('inputmode') === 'numeric' && w.document.querySelectorAll('.ls-type-row').length >= 1 && w.document.querySelector('.ls-type-row').getAttribute('onclick').includes(onBed1[1]), w.document.querySelector('#lsTypeList').innerHTML.slice(0, 200));
+  const typed = String(Number(onBed1[1].slice(1)));
+  const tin = w.document.querySelector('#lsTypeIn'); tin.value = typed; tin.dispatchEvent(new w.Event('input'));
+  ok('typing just the number lists that piece first', w.document.querySelector('.ls-type-row').getAttribute('onclick').includes(onBed1[1]) && /No\. \d+/.test(w.document.querySelector('.ls-type-row').textContent));
+  tin.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter' })); await sleep(10);
+  ok('Enter on an exact number scans it and closes the pad', w.LS.off.includes(onBed1[1]) && !w.document.querySelector('#lsTypeBox'));
+  w.LS.off = w.LS.off.filter(c => c !== onBed1[1]); w.lsDraw();
+  w.lsScan(String(Number(onBed1[1].slice(1)))); await sleep(10);
+  ok('a scanner or typed "42" also works without the L and zeros', w.LS.off.includes(onBed1[1]));
+  w.LS.off = w.LS.off.filter(c => c !== onBed1[1]); w.lsDraw();
   w.lsFinishBed(); await sleep(20);
   ok('pieces not scanned off bring up one plain question', w.LS.screen === 'bedask' && /could not find/.test(vv().textContent));
   w.lsFinishBed(true); await sleep(120);
@@ -282,6 +294,24 @@ try {
   await w.lnRevDamaged(dirty, true); await sleep(80);
   l2 = (await handleRequest({ method: 'GET', path: '/api/linen', headers: H })).body;
   ok('"Still usable" puts damage back in the soiled bin', l2.pieces.find(p => p.code === dirty).status === 'soiled' && w.document.querySelectorAll('.ln-rev').length === revCount - 1);
+  out.push('\n▶ A room booked as Double or Triple');
+  let l3 = (await handleRequest({ method: 'GET', path: '/api/linen', headers: H })).body;
+  await handleRequest({ method: 'PUT', path: '/api/linen/setup', headers: H, body: { rooms: [...l3.rooms.map(x => ({ ...x, originalName: x.name })), {
+    name: 'Mframadan', beds: [{ label: 'Bed 1', size: 'Double' }, { label: 'Extra bed', size: 'Single', altOnly: true }], towels: { btowel: 2 }, alt: { mainName: 'Double', name: 'Triple', towels: { btowel: 3 } } }] } });
+  w.lnGo('rooms'); await sleep(80);
+  const mfCard = [...w.document.querySelectorAll('.ln-room')].find(c => /Mframadan/.test(c.textContent));
+  ok('reception sees a Booked as Double | Triple switch', mfCard && mfCard.querySelectorAll('.ln-book button').length === 2 && /Double/.test(mfCard.querySelector('.ln-book button.on').textContent));
+  ok('the extra bed shows as a sofa, with no Guest left button', /Extra bed\s*Single · Sofa/.test(mfCard.textContent) && mfCard.querySelectorAll('.ln-gl').length === 1, mfCard.textContent);
+  await w.lnBooking(l3.rooms.length, true); await sleep(80);
+  l3 = (await handleRequest({ method: 'GET', path: '/api/linen', headers: H })).body;
+  ok('switching to Triple is saved', l3.rooms.find(x => x.name === 'Mframadan').altOn === true);
+  w.lnGo('staff'); await sleep(80);
+  w.lsGo('bed', { room: 'Mframadan' }); await sleep(30);
+  const tiles = [...w.document.querySelectorAll('.ls-room')].map(t => t.textContent.replace(/\s+/g, ' ').trim());
+  ok('staff screens show Booked as Triple, the extra bed to make, and 3 towels', /Booked as Triple/.test(w.document.querySelector('#view').textContent) && tiles.some(t => /Extra bed.*Not made/.test(t)), tiles.join(' | '));
+  w.lsPickPlace(2); await sleep(30);
+  ok('the towels now ask for three', w.document.querySelectorAll('.ls-slot').length === 3, w.document.querySelectorAll('.ls-slot').length + '');
+  w.lsHome();
   w.lnGo('staff'); await sleep(80);
   ok('admins can open the staff screens', /What are you doing\?/.test(w.document.querySelector('#view').textContent) && /Wash the dirty bin/.test(w.document.querySelector('#view').textContent));
 } catch (err) {

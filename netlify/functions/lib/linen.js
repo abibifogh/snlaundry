@@ -53,7 +53,8 @@ export function defaultLinen() {
       Queen: { bsheet: 1, dsheet: 2, pcase: 2 },
       King: { bsheet: 1, dsheet: 2, pcase: 2 },
     },
-    rooms: [], // { name, cupboard, beds: [{ id, label, size, state, changedAt }], towels: {typeId: n}, towelsState, towelsChangedAt, checkoutAt }
+    // checkoutAt on a bed: that guest left (dorms check out bed by bed); on the room: the whole room did.
+    rooms: [], // { name, cupboard, beds: [{ id, label, size, state, changedAt, checkoutAt }], towels: {typeId: n}, towelsState, towelsChangedAt, checkoutAt }
     pieces: [], // { code, typeId, status, loc, room, bed, washes, cost, supplier, addedAt, statusAt, batchId, missingFrom, retiredReason, note }
     batches: [], // { id, number, sentAt, sentBy, codes, status, receivedAt, receivedBy, back, rewash, damaged, missing }
     log: [], // { id, at, by, role, action, detail, codes }
@@ -158,14 +159,25 @@ export async function saveLinenSetup(patch = {}, actor) {
             label: String(b.label || '').trim() || `Bed ${i + 1}`,
             size: sizeOf(b.size),
             state: prev ? prev.state : 'stripped',
+            checkoutAt: prev ? prev.checkoutAt || null : null,
             changedAt: prev ? prev.changedAt : null,
+            altOnly: !!(r.alt && b.altOnly), // a sofa unless the room is booked the second way
           };
         });
+        // A second way the room can be booked (e.g. Double / Triple), with its own towels.
+        const alt = r.alt && String(r.alt.name || '').trim() ? {
+          name: String(r.alt.name).trim().slice(0, 30),
+          mainName: String(r.alt.mainName || '').trim().slice(0, 30) || 'Standard',
+          towels: cleanSet(r.alt.towels || {}, typeIds),
+        } : null;
         return {
           name,
           cupboard: !!r.cupboard,
           beds,
           towels: cleanSet(r.towels || {}, typeIds),
+          alt,
+          altOn: !!(alt && old.altOn),
+          altAt: alt ? old.altAt || null : null,
           towelsState: old.towelsState || 'stripped',
           towelsChangedAt: old.towelsChangedAt || null,
           checkoutAt: old.checkoutAt || null,
@@ -244,6 +256,7 @@ export async function changePlace({ room, bed = null, off = [], keep = [], on = 
     const b = bed ? r.beds.find((x) => x.id === bed) : null;
     if (bed && !b) throw httpError(404, 'Bed not found.');
     const where = bed ? `${room} ${b.label}` : `${room} towels`;
+    if (b && b.altOnly && !r.altOn && codesOf(on).length) throw httpError(400, `${room} ${b.label} is a sofa while the room is booked as ${r.alt ? r.alt.mainName : 'standard'}. Nothing goes on it.`);
     const current = d.pieces.filter((p) => p.status === 'in_use' && p.room === room && (p.bed || null) === (bed || null));
     const curCodes = new Set(current.map((p) => p.code));
     const offC = codesOf(off), keepC = codesOf(keep), onC = codesOf(on);
@@ -265,7 +278,7 @@ export async function changePlace({ room, bed = null, off = [], keep = [], on = 
     onPieces.forEach((p) => { setStatus(p, 'in_use', at); p.room = room; p.bed = bed || null; });
 
     const filled = onC.length + keepC.length > 0;
-    if (b) { b.state = filled ? 'made' : 'stripped'; if (onC.length) b.changedAt = at; }
+    if (b) { b.state = filled ? 'made' : 'stripped'; if (onC.length) b.changedAt = at; if (onC.length || offC.length) b.checkoutAt = null; }
     else { r.towelsState = filled ? 'made' : 'stripped'; if (onC.length) r.towelsChangedAt = at; }
     if (r.checkoutAt && placesOf(r).every((pl) => pl.changedAt && pl.changedAt >= r.checkoutAt)) r.checkoutAt = null;
 
@@ -278,12 +291,33 @@ export async function changePlace({ room, bed = null, off = [], keep = [], on = 
   });
 }
 
-export async function markCheckout({ room } = {}, actor) {
+// With a bed: that one guest left (a dorm bed). Without: the whole room.
+export async function markCheckout({ room, bed = null } = {}, actor) {
   return mutate((d) => {
     const r = d.rooms.find((x) => x.name === room);
     if (!r) throw httpError(404, 'Room not found.');
-    r.checkoutAt = nowIso();
-    addLog(d, actor, `Checked out ${room}`, 'Beds and towels due a change');
+    if (bed) {
+      const b = r.beds.find((x) => x.id === bed);
+      if (!b) throw httpError(404, 'Bed not found.');
+      b.checkoutAt = nowIso();
+      addLog(d, actor, `Guest left ${room} ${b.label}`, 'Bed due a change');
+    } else {
+      r.checkoutAt = nowIso();
+      addLog(d, actor, `Checked out ${room}`, 'Beds and towels due a change');
+    }
+    return { ok: true };
+  });
+}
+
+// Reception says how a room is booked at check-in, e.g. Double or Triple.
+export async function setBooking({ room, alt = false } = {}, actor) {
+  return mutate((d) => {
+    const r = d.rooms.find((x) => x.name === room);
+    if (!r) throw httpError(404, 'Room not found.');
+    if (!r.alt) throw httpError(400, `${room} has only one way to be booked. Add a second one in Setup.`);
+    if (!!r.altOn === !!alt) return { ok: true };
+    r.altOn = !!alt; r.altAt = nowIso();
+    addLog(d, actor, `${room} booked as ${r.altOn ? r.alt.name : r.alt.mainName}`, r.altOn ? 'Extra bed and towels to make up' : 'Extra bed back to a sofa');
     return { ok: true };
   });
 }
@@ -460,7 +494,7 @@ export async function stockCount({ loc, codes, note = '' } = {}, actor) {
 
 export async function pieceHistory(code) {
   const d = await getLinen();
-  const c = String(code || '').trim().toUpperCase();
+  const c = normCode(code);
   const p = d.pieces.find((x) => x.code === c);
   if (!p) throw httpError(404, `No piece with code ${c}.`);
   return { piece: p, history: d.log.filter((l) => (l.codes || []).includes(c)).slice(-100).reverse() };
@@ -508,8 +542,14 @@ function pieceOr404(d, code) {
   if (!p) throw httpError(404, `No piece with code ${code}.`);
   return p;
 }
+// "42", "l42" and "L00042" all mean piece L00042.
+export function normCode(c) {
+  const s = String(c || '').trim().toUpperCase();
+  const m = s.match(/^L?0*(\d+)$/);
+  return m ? 'L' + m[1].padStart(5, '0') : s;
+}
 function codesOf(list) {
-  return [...new Set((Array.isArray(list) ? list : []).map((c) => String(c || '').trim().toUpperCase()).filter(Boolean))];
+  return [...new Set((Array.isArray(list) ? list : []).map(normCode).filter(Boolean))];
 }
 function cleanSet(set, typeIds) {
   const out = {};
