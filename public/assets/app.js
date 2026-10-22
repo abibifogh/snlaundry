@@ -272,8 +272,35 @@ function notifyBg(title, body, tag) {
 }
 
 // ---------------- boot ----------------
+// ---------------- new version of the app ----------------
+// The reception terminal and staff phones keep the app open for days, and an
+// open page keeps running the code it loaded. Every few minutes, compare the
+// app's files with the server's: when they change, reload at once if nobody is
+// signed in (lock screen), otherwise offer a one-tap reload.
+const APP_FILES = ['/assets/app.js', '/assets/guide.js', '/assets/linen.js', '/assets/linen-simple.js', '/assets/styles.css', '/app.html'];
+let _appVersion = null;
+async function appVersion() {
+  const tags = await Promise.all(APP_FILES.map((f) => fetch(f, { method: 'HEAD', cache: 'no-store' })
+    .then((r) => (r.ok ? r.headers.get('etag') || r.headers.get('last-modified') || '' : '')).catch(() => '')));
+  return tags.every((t) => !t) ? null : tags.join('|');
+}
+async function checkForUpdate() {
+  const v = await appVersion().catch(() => null);
+  if (!v) return;
+  if (_appVersion === null) { _appVersion = v; return; }
+  if (v === _appVersion) return;
+  if (!state.user) return location.reload(); // lock screen: nobody's work to lose
+  if (document.getElementById('updateBar')) return;
+  const bar = document.createElement('div');
+  bar.id = 'updateBar'; bar.className = 'update-bar';
+  bar.innerHTML = '<span>A new version of the app is ready.</span><button class="small" onclick="location.reload()">Reload now</button>';
+  document.body.appendChild(bar);
+}
+
 async function boot() {
   registerSW();
+  checkForUpdate();
+  setInterval(checkForUpdate, 5 * 60000);
   let status;
   try { status = await api('GET', '/status'); } catch { status = {}; }
   if (!status.isSetup) return showSetup();
