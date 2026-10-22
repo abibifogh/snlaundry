@@ -256,11 +256,8 @@ function lsNeedList() {
 }
 function lsPlaceTitle() { const pl = lsPlace(); return pl ? `${LS.room} · ${pl.label}` : LS.room; }
 function lsCupNeed() {
-  const r = LN.doc.rooms.find((x) => x.name === LS.room), need = {};
-  if (!r) return need;
-  r.beds.forEach((b) => Object.entries(LN.doc.bedSets[b.size] || {}).forEach(([t, k]) => { need[t] = (need[t] || 0) + k; }));
-  Object.entries(r.towels || {}).forEach(([t, k]) => { need[t] = (need[t] || 0) + k; });
-  return need;
+  const r = LN.doc.rooms.find((x) => x.name === LS.room);
+  return r ? lnRoomChange(r) : {};
 }
 function lsCupHave(typeId) { return LN.doc.pieces.filter((p) => p.status === 'clean' && p.loc === LS.room && p.typeId === typeId).length; }
 // The wash to fold: the oldest one still out.
@@ -360,11 +357,11 @@ const LS_SCREENS = {
     const pls = lnPlaces().filter((pl) => pl.room.name === LS.room);
     return {
       top: lsBar(LS.room, "lsGo('room')"),
-      body: `<p class="ls-say">Which one?</p><div class="ls-rooms">${pls.map((pl, i) => {
+      body: `${(() => { const r = LN.doc.rooms.find((x) => x.name === LS.room); return r && r.alt ? `<p class="ls-p">Booked as <b>${esc(lnBookedAs(r))}</b></p>` : ''; })()}<p class="ls-say">Which one?</p><div class="ls-rooms">${pls.map((pl, i) => {
         const due = lnPlaceDue(pl);
         const d = lnDays(pl.changedAt);
-        const sub = due === 'stripped' ? 'Not made' : due === 'checkout' ? 'Guest left' : d === 0 ? 'Done today' : d != null ? `${d} day${d === 1 ? '' : 's'}` : '';
-        return `<button class="ls-room ${due ? 'due' : ''}" onclick="lsPickPlace(${i})"><span class="sw" style="background:${lsRoomColor(LS.room)}"></span><b>${esc(pl.label)}</b><span class="${due ? 'flag' : 'sub'}">${due ? '● ' : ''}${sub}</span></button>`;
+        const sub = pl.kind === 'sofa' ? (due ? 'Make it a sofa' : 'Sofa') : due === 'stripped' ? 'Not made' : due === 'checkout' ? 'Guest left' : due === 'booking' ? `Now ${lnBookedAs(pl.room)}` : d === 0 ? 'Done today' : d != null ? `${d} day${d === 1 ? '' : 's'}` : '';
+        return `<button class="ls-room ${due ? 'due' : ''}" onclick="lsPickPlace(${i})" ${pl.kind === 'sofa' && !due ? 'disabled' : ''}><span class="sw" style="background:${lsRoomColor(LS.room)}"></span><b>${esc(pl.label)}</b><span class="${due ? 'flag' : 'sub'}">${due ? '● ' : ''}${esc(sub)}</span></button>`;
       }).join('')}</div>`,
     };
   },
@@ -381,7 +378,7 @@ const LS_SCREENS = {
         ${cur.length ? `<div class="ls-h"><b>1. Take off</b><span>${LS.off.length} of ${cur.length}</span></div>
           <div class="ls-slots">${cur.map((p) => lsSlot(p.typeId, LS.off.includes(p.code) ? 'got' : 'empty', p.code)).join('')}</div>` : ''}
         <div class="ls-h"><b>${cur.length ? '2. ' : ''}Put on</b><span>${LS.on.length} of ${need.length}</span></div>
-        <div class="ls-slots">${onSlots.join('') || '<p>Nothing is set up for this one. Ask the supervisor.</p>'}</div>
+        <div class="ls-slots">${onSlots.join('') || (lsPlace() && lsPlace().kind === 'sofa' ? '<p class="ls-p">Nothing goes on. It is a sofa now.</p>' : '<p>Nothing is set up for this one. Ask the supervisor.</p>')}</div>
         ${cur.length ? '<button class="ls-link" onclick="lsStripOnly()">Leave it empty, make it later</button>' : ''}`,
       foot: `<button class="ls-big" onclick="lsFinishBed()" ${full && (need.length || cur.length) ? '' : 'disabled'}>${full ? 'Done' : 'Scan the clean pieces'}</button>${lsTypeLink}`,
     };
@@ -398,7 +395,7 @@ const LS_SCREENS = {
   beddone() {
     return {
       top: lsBar('', null),
-      body: `<div class="ls-done"><div class="ring">${LS_ICON.tick}</div><h3>${LS.on.length ? 'Done' : 'Bed stripped'}</h3>
+      body: `<div class="ls-done"><div class="ring">${LS_ICON.tick}</div><h3>${LS.on.length ? 'Done' : lsPlace() && lsPlace().kind === 'sofa' ? 'Sofa ready' : 'Bed stripped'}</h3>
         <p>${esc(lsPlaceTitle())}${LS.ask.length ? '. The supervisor will look for the missing piece.' : '.'}</p>
         <div class="mini">${LS.on.map((c) => lnPic(lnPiece(c).typeId, 36)).join('')}</div></div>`,
       foot: `<button class="ls-big" onclick="lsGo('bed',{off:[],on:[],ask:[]})">Next in ${esc(LS.room)}</button><button class="ls-big alt" onclick="lsHome()">Home</button>`,

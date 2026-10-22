@@ -161,13 +161,23 @@ export async function saveLinenSetup(patch = {}, actor) {
             state: prev ? prev.state : 'stripped',
             checkoutAt: prev ? prev.checkoutAt || null : null,
             changedAt: prev ? prev.changedAt : null,
+            altOnly: !!(r.alt && b.altOnly), // a sofa unless the room is booked the second way
           };
         });
+        // A second way the room can be booked (e.g. Double / Triple), with its own towels.
+        const alt = r.alt && String(r.alt.name || '').trim() ? {
+          name: String(r.alt.name).trim().slice(0, 30),
+          mainName: String(r.alt.mainName || '').trim().slice(0, 30) || 'Standard',
+          towels: cleanSet(r.alt.towels || {}, typeIds),
+        } : null;
         return {
           name,
           cupboard: !!r.cupboard,
           beds,
           towels: cleanSet(r.towels || {}, typeIds),
+          alt,
+          altOn: !!(alt && old.altOn),
+          altAt: alt ? old.altAt || null : null,
           towelsState: old.towelsState || 'stripped',
           towelsChangedAt: old.towelsChangedAt || null,
           checkoutAt: old.checkoutAt || null,
@@ -246,6 +256,7 @@ export async function changePlace({ room, bed = null, off = [], keep = [], on = 
     const b = bed ? r.beds.find((x) => x.id === bed) : null;
     if (bed && !b) throw httpError(404, 'Bed not found.');
     const where = bed ? `${room} ${b.label}` : `${room} towels`;
+    if (b && b.altOnly && !r.altOn && codesOf(on).length) throw httpError(400, `${room} ${b.label} is a sofa while the room is booked as ${r.alt ? r.alt.mainName : 'standard'}. Nothing goes on it.`);
     const current = d.pieces.filter((p) => p.status === 'in_use' && p.room === room && (p.bed || null) === (bed || null));
     const curCodes = new Set(current.map((p) => p.code));
     const offC = codesOf(off), keepC = codesOf(keep), onC = codesOf(on);
@@ -294,6 +305,19 @@ export async function markCheckout({ room, bed = null } = {}, actor) {
       r.checkoutAt = nowIso();
       addLog(d, actor, `Checked out ${room}`, 'Beds and towels due a change');
     }
+    return { ok: true };
+  });
+}
+
+// Reception says how a room is booked at check-in, e.g. Double or Triple.
+export async function setBooking({ room, alt = false } = {}, actor) {
+  return mutate((d) => {
+    const r = d.rooms.find((x) => x.name === room);
+    if (!r) throw httpError(404, 'Room not found.');
+    if (!r.alt) throw httpError(400, `${room} has only one way to be booked. Add a second one in Setup.`);
+    if (!!r.altOn === !!alt) return { ok: true };
+    r.altOn = !!alt; r.altAt = nowIso();
+    addLog(d, actor, `${room} booked as ${r.altOn ? r.alt.name : r.alt.mainName}`, r.altOn ? 'Extra bed and towels to make up' : 'Extra bed back to a sofa');
     return { ok: true };
   });
 }

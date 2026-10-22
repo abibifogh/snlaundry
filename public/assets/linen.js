@@ -106,28 +106,56 @@ function lnWhere(p) {
   return 'Soiled bin';
 }
 
-// Every bed and every room's towels is a "place" with a set of pieces.
+// A room can be booked two ways (e.g. Double / Triple). These follow how it's booked now.
+function lnBedActive(r, b) { return !b.altOnly || !!r.altOn; }
+function lnRoomTowels(r) { return r.altOn && r.alt ? r.alt.towels || {} : r.towels || {}; }
+function lnBookedAs(r) { return r.alt ? (r.altOn ? r.alt.name : r.alt.mainName) : ''; }
+// One full change for the room as it's booked now (what its cupboard should hold).
+function lnRoomChange(r) {
+  const need = {};
+  r.beds.filter((b) => lnBedActive(r, b)).forEach((b) => Object.entries(LN.doc.bedSets[b.size] || {}).forEach(([k, n]) => { need[k] = (need[k] || 0) + n; }));
+  Object.entries(lnRoomTowels(r)).forEach(([k, n]) => { need[k] = (need[k] || 0) + n; });
+  return need;
+}
+
+// Every bed and every room's towels is a "place" with a set of pieces. A sofa
+// bed (only made up when the room is booked the bigger way) takes nothing.
 function lnPlaces() {
   const out = [];
   LN.doc.rooms.forEach((r, ri) => {
-    r.beds.forEach((b, bi) => out.push({ ri, bi, room: r, label: b.label, kind: 'bed', size: b.size, set: LN.doc.bedSets[b.size] || {}, state: b.state, changedAt: b.changedAt, checkoutAt: b.checkoutAt || null, bedId: b.id }));
-    if (Object.keys(r.towels || {}).length) out.push({ ri, bi: -1, room: r, label: 'Towels', kind: 'bath', set: r.towels, state: r.towelsState, changedAt: r.towelsChangedAt, bedId: null });
+    r.beds.forEach((b, bi) => {
+      const active = lnBedActive(r, b);
+      const hasLinen = !active && LN.doc.pieces.some((p) => p.status === 'in_use' && p.room === r.name && p.bed === b.id);
+      out.push({ ri, bi, room: r, label: b.label, kind: active ? 'bed' : 'sofa', hasLinen, size: b.size, set: active ? LN.doc.bedSets[b.size] || {} : {}, state: b.state, changedAt: b.changedAt, checkoutAt: b.checkoutAt || null, bedId: b.id });
+    });
+    if (Object.keys(r.towels || {}).length || (r.alt && Object.keys(r.alt.towels || {}).length)) {
+      out.push({ ri, bi: -1, room: r, label: 'Towels', kind: 'bath', set: lnRoomTowels(r), state: r.towelsState, changedAt: r.towelsChangedAt, bookingAt: r.alt ? r.altAt : null, bedId: null });
+    }
   });
   return out;
 }
 function lnPlaceDue(pl) {
+  if (pl.kind === 'sofa') return pl.hasLinen ? 'sofa' : '';
   // A guest leaving comes first: the bed may already be stripped, but it still needs the guest-left change.
   const out = [pl.checkoutAt, pl.room.checkoutAt].filter(Boolean).sort().pop();
   if (out && (!pl.changedAt || pl.changedAt < out)) return 'checkout';
   if (pl.state !== 'made') return 'stripped';
+  if (pl.bookingAt && (!pl.changedAt || pl.changedAt < pl.bookingAt)) return 'booking';
   const limit = pl.kind === 'bath' ? LN.doc.towelChangeDays : LN.doc.bedChangeDays;
   const d = lnDays(pl.changedAt);
   if (d != null && d >= limit) return 'old';
   return '';
 }
+// Stock targets count every room at its biggest booking: sofa beds made up, and the larger towel set.
 function lnNeedPerType() {
   const need = {};
-  lnPlaces().forEach((pl) => Object.entries(pl.set).forEach(([k, n]) => { need[k] = (need[k] || 0) + n; }));
+  const add = (k, n) => { need[k] = (need[k] || 0) + n; };
+  LN.doc.rooms.forEach((r) => {
+    r.beds.forEach((b) => Object.entries(LN.doc.bedSets[b.size] || {}).forEach(([k, n]) => add(k, n)));
+    const t = { ...(r.towels || {}) };
+    Object.entries((r.alt && r.alt.towels) || {}).forEach(([k, n]) => { t[k] = Math.max(t[k] || 0, n); });
+    Object.entries(t).forEach(([k, n]) => add(k, n));
+  });
   return need;
 }
 function lnCountBy(pred) {
@@ -423,7 +451,9 @@ function lnAlerts() {
     a.push({ level: 'warn', title: `${b.number} has been in the wash ${Math.floor(lnHours(b.sentAt))} hours`, text: `${b.codes.length} pieces sent ${fmt(b.sentAt)} by ${b.sentBy}.`, action: can('linenWash') ? `lnOpenReceive('${b.id}')` : '', label: 'Receive' }));
   const left = places.filter((pl) => lnPlaceDue(pl) === 'checkout');
   if (left.length) a.push({ level: 'warn', title: `Guests left: ${left.length} bed(s)/bathroom(s) to change`, text: left.slice(0, 8).map((pl) => `${pl.room.name} ${pl.label}`).join(', ') + (left.length > 8 ? '…' : ''), action: "lnRoomsFilter('checkout')", label: 'Open rooms' });
-  const stripped = places.filter((pl) => pl.state !== 'made');
+  const rebook = places.filter((pl) => ['sofa', 'booking'].includes(lnPlaceDue(pl)));
+  if (rebook.length) a.push({ level: 'warn', title: `Booking changed: ${[...new Set(rebook.map((pl) => `${pl.room.name} (now ${lnBookedAs(pl.room)})`))].join(', ')}`, text: rebook.map((pl) => `${pl.room.name} ${pl.label}: ${lnPlaceDue(pl) === 'sofa' ? 'make it a sofa' : 'change'}`).join(', '), action: "lnRoomsFilter('due')", label: 'Open rooms' });
+  const stripped = places.filter((pl) => pl.kind !== 'sofa' && pl.state !== 'made');
   if (stripped.length) a.push({ level: 'warn', title: `${stripped.length} bed(s)/bathroom(s) not made up`, text: stripped.slice(0, 6).map((pl) => `${pl.room.name} ${pl.label}`).join(', ') + (stripped.length > 6 ? '…' : ''), action: "lnRoomsFilter('due')", label: 'Open rooms' });
   const old = places.filter((pl) => lnPlaceDue(pl) === 'old');
   if (old.length) a.push({ level: 'info', title: `${old.length} due a routine change`, text: `Beds after ${d.bedChangeDays} day(s), towels after ${d.towelChangeDays} day(s).`, action: "lnRoomsFilter('due')", label: 'Open rooms' });
@@ -454,13 +484,17 @@ function lnRooms(v) {
       return `<div class="ln-room">
         <div class="ln-room-h"><b>${esc(r.name)}</b>${(() => { const n = places.filter((pl) => pl.ri === ri && lnPlaceDue(pl) === 'checkout').length; return n ? `<span class="ln-tag ln-amber">Guest left · ${n} to change</span>` : ''; })()}</div>
         <div class="muted" style="font-size:12px;margin:2px 0 8px">${r.beds.length} bed(s)${r.cupboard ? ` · cupboard: ${clean(r.name)} clean` : ''}</div>
+        ${r.alt ? (can('linenCheckout')
+          ? `<div class="ln-book"><span>Booked as</span>${[[false, r.alt.mainName], [true, r.alt.name]].map(([v, l]) => `<button class="${!!r.altOn === v ? 'on' : ''}" onclick="lnBooking(${ri},${v})">${esc(l)}</button>`).join('')}</div>`
+          : `<div class="ln-book"><span>Booked as</span><b>${esc(lnBookedAs(r))}</b></div>`) : ''}
         <div class="ln-places">${pls.map((pl) => {
           const due = lnPlaceDue(pl);
           const cls = due === 'stripped' ? 'ln-pl-bad' : due ? 'ln-pl-due' : '';
-          const st = due === 'stripped' ? 'Not made up' : due === 'checkout' ? 'Guest left: change' : pl.changedAt ? (lnDays(pl.changedAt) === 0 ? 'Changed today' : `${lnDays(pl.changedAt)} day(s) ago`) : 'Made';
-          const tile = `<button class="ln-place ${cls}" onclick="lnOpenChange(${pl.ri},${pl.bi})" ${can('linenUse') ? '' : 'disabled'}><b>${esc(pl.label)}</b><span>${pl.kind === 'bed' ? esc(pl.size) + ' · ' : ''}${st}</span></button>`;
+          const st = pl.kind === 'sofa' ? (due ? 'Make it a sofa: take the linen off' : 'Sofa')
+            : due === 'stripped' ? 'Not made up' : due === 'checkout' ? 'Guest left: change' : due === 'booking' ? `Now ${esc(lnBookedAs(r))}: change` : pl.changedAt ? (lnDays(pl.changedAt) === 0 ? 'Changed today' : `${lnDays(pl.changedAt)} day(s) ago`) : 'Made';
+          const tile = `<button class="ln-place ${cls}" onclick="lnOpenChange(${pl.ri},${pl.bi})" ${can('linenUse') && (pl.kind !== 'sofa' || due) ? '' : 'disabled'}><b>${esc(pl.label)}</b><span>${pl.kind !== 'bath' ? esc(pl.size) + ' · ' : ''}${st}</span></button>`;
           // Reception marks each bed's guest as gone: dorms check out bed by bed.
-          const gl = !can('linenCheckout') || pl.kind !== 'bed' ? ''
+          const gl = !can('linenCheckout') || pl.kind !== 'bed' || (r.beds[pl.bi] || {}).altOnly ? ''
             : due === 'checkout' ? '<span class="ln-gl ln-gl-done">Guest left ✓</span>'
             : `<button class="ln-gl" onclick="lnCheckout(${pl.ri},${pl.bi})">Guest left</button>`;
           return gl ? `<div class="ln-pl-wrap">${tile}${gl}</div>` : tile;
@@ -470,6 +504,13 @@ function lnRooms(v) {
     }).join('') || '<p class="muted">Nothing here.</p>'}</div>
     <div class="ln-legend"><span><i style="background:#fdf1e1;border:1px solid var(--warn)"></i>Due: guest left, or ${d.bedChangeDays}+ days (towels ${d.towelChangeDays}+)</span><span><i style="background:#fdeaea;border:1px solid var(--danger)"></i>Not made up</span></div>`;
 }
+window.lnBooking = async (ri, alt) => {
+  const r = LN.doc.rooms[ri];
+  if (!!r.altOn === alt) return;
+  const to = alt ? r.alt.name : r.alt.mainName;
+  if (!confirm(`${r.name} booked as ${to}? Housekeeping will ${alt ? 'make up the extra bed and towels' : 'turn the extra bed back into a sofa'}.`)) return;
+  try { await api('POST', '/linen/booking', { room: r.name, alt }); await lnReload(); } catch (e) { alert(e.message); }
+};
 window.lnCheckout = async (ri, bi) => {
   const r = LN.doc.rooms[ri];
   const b = bi != null && bi >= 0 ? r.beds[bi] : null;
@@ -483,7 +524,7 @@ window.lnOpenChange = (ri, bi) => {
   if (!can('linenUse')) return;
   const r = LN.doc.rooms[ri];
   const bed = bi >= 0 ? r.beds[bi] : null;
-  const set = bed ? (LN.doc.bedSets[bed.size] || {}) : r.towels;
+  const set = (lnPlaces().find((pl) => pl.ri === ri && pl.bi === bi) || { set: {} }).set;
   const current = LN.doc.pieces.filter((p) => p.status === 'in_use' && p.room === r.name && (p.bed || null) === (bed ? bed.id : null));
   LN.chg = { room: r.name, bed: bed ? bed.id : null, title: `${r.name} · ${bed ? bed.label + ' · ' + bed.size : 'Towels'}`, set, current: current.map((p) => ({ code: p.code, typeId: p.typeId, mode: 'off' })), on: [] };
   lnDrawChange();
@@ -680,8 +721,7 @@ function lnStock(v) {
   const room = d.rooms.find((r) => r.name === LN.loc);
   const want = {};
   if (room) {
-    room.beds.forEach((b) => Object.entries(d.bedSets[b.size] || {}).forEach(([k, n]) => { want[k] = (want[k] || 0) + n; }));
-    Object.entries(room.towels || {}).forEach(([k, n]) => { want[k] = (want[k] || 0) + n; });
+    Object.assign(want, lnRoomChange(room));
   }
   const types = [...new Set([...Object.keys(by), ...Object.keys(want)])];
   const lastCount = d.log.slice().reverse().find((l) => l.action === `Counted ${LN.loc === 'store' ? 'the storeroom' : 'the ' + LN.loc + ' cupboard'}`);
@@ -769,8 +809,7 @@ window.lnMovePick = () => {
   const m = LN.mv, d = LN.doc;
   const room = d.rooms.find((r) => r.name === m.to);
   const want = {};
-  room.beds.forEach((b) => Object.entries(d.bedSets[b.size] || {}).forEach(([k, n]) => { want[k] = (want[k] || 0) + n; }));
-  Object.entries(room.towels || {}).forEach(([k, n]) => { want[k] = (want[k] || 0) + n; });
+  Object.assign(want, lnRoomChange(room));
   const have = lnCountBy((p) => p.status === 'clean' && p.loc === m.to);
   m.codes.forEach((c) => { const t = lnPiece(c).typeId; have[t] = (have[t] || 0) + 1; });
   Object.entries(want).forEach(([k, n]) => {
@@ -1036,16 +1075,27 @@ function lnSetup(v) {
           <div class="toolbar"><div><label>Room name</label><input value="${esc(r.name)}" oninput="LN.draft.rooms[${ri}].name=this.value"></div>
             <label class="ln-cb" style="align-self:flex-end;margin-bottom:10px"><input type="checkbox" ${r.cupboard ? 'checked' : ''} onchange="LN.draft.rooms[${ri}].cupboard=this.checked"> Has a cupboard</label>
             <button class="small danger" onclick="LN.draft.rooms.splice(${ri},1);lnGo('setup')">Remove room</button></div>
+          <label class="ln-cb" style="margin:10px 0 0"><input type="checkbox" ${r.alt ? 'checked' : ''} onchange="lnToggleAlt(${ri},this.checked)"> Can also be booked another way (e.g. as a Triple, with an extra bed)</label>
+          ${r.alt ? `<div class="toolbar" style="margin-top:4px"><div><label>Usually booked as</label><input value="${esc(r.alt.mainName)}" oninput="LN.draft.rooms[${ri}].alt.mainName=this.value" placeholder="e.g. Double"></div>
+            <div><label>Or booked as</label><input value="${esc(r.alt.name)}" oninput="LN.draft.rooms[${ri}].alt.name=this.value" placeholder="e.g. Triple"></div></div>` : ''}
           <label>Beds</label>
           ${r.beds.map((b, bi) => `<div class="ln-bedrow"><input value="${esc(b.label)}" oninput="LN.draft.rooms[${ri}].beds[${bi}].label=this.value" placeholder="e.g. Bed 1">
             <select onchange="LN.draft.rooms[${ri}].beds[${bi}].size=this.value">${g.bedSizes.map((z) => `<option value="${esc(z.name)}" ${b.size === z.name ? 'selected' : ''}>${esc(z.name)}</option>`).join('')}</select>
+            ${r.alt ? `<label class="ln-cb ln-sofa"><input type="checkbox" ${b.altOnly ? 'checked' : ''} onchange="LN.draft.rooms[${ri}].beds[${bi}].altOnly=this.checked"> Sofa unless ${esc(r.alt.name || 'booked the other way')}</label>` : ''}
             <button class="small ghost" onclick="LN.draft.rooms[${ri}].beds.splice(${bi},1);lnGo('setup')" aria-label="Remove bed">✕</button></div>`).join('')}
           <button class="small secondary" onclick="LN.draft.rooms[${ri}].beds.push({label:'Bed ${r.beds.length + 1}',size:lnDefaultSize()});lnGo('setup')">+ Bed</button>
-          ${bathTypes.length ? `<label>Towels for the room</label><div class="ln-towels">${bathTypes.map((t) => `<span><input type="number" min="0" max="20" value="${(r.towels || {})[t.id] || 0}" oninput="lnSetQty(LN.draft.rooms[${ri}],'towels','${t.id}',this.value)"> ${esc(t.name)}</span>`).join('')}</div>` : ''}
+          ${bathTypes.length ? `<label>Towels for the room${r.alt ? ` when booked as ${esc(r.alt.mainName || 'usual')}` : ''}</label><div class="ln-towels">${bathTypes.map((t) => `<span><input type="number" min="0" max="20" value="${(r.towels || {})[t.id] || 0}" oninput="lnSetQty(LN.draft.rooms[${ri}],'towels','${t.id}',this.value)"> ${esc(t.name)}</span>`).join('')}</div>` : ''}
+          ${bathTypes.length && r.alt ? `<label>Towels when booked as ${esc(r.alt.name || 'the other way')}</label><div class="ln-towels">${bathTypes.map((t) => `<span><input type="number" min="0" max="20" value="${(r.alt.towels || {})[t.id] || 0}" oninput="lnSetQty(LN.draft.rooms[${ri}].alt,'towels','${t.id}',this.value)"> ${esc(t.name)}</span>`).join('')}</div>` : ''}
         </div>`).join('')}</div>
       <button class="small secondary" style="margin-top:10px" onclick="LN.draft.rooms.push({name:'',cupboard:false,beds:[{label:'Bed 1',size:lnDefaultSize()}],towels:{}});lnGo('setup')">+ Add room</button></div>
     <div class="ln-savebar"><button class="secondary" onclick="LN.draft=null;lnGo('setup')">Undo changes</button><button onclick="lnSaveSetup()">Save setup</button></div>`;
 }
+window.lnToggleAlt = (ri, on) => {
+  const r = LN.draft.rooms[ri];
+  r.alt = on ? { mainName: 'Double', name: 'Triple', towels: { ...(r.towels || {}) } } : null;
+  if (!on) r.beds.forEach((b) => { b.altOnly = false; });
+  lnGo('setup');
+};
 window.lnSetQty = (obj, key, typeId, val) => { obj[key] = obj[key] || {}; const n = Math.max(0, Math.round(+val || 0)); if (n) obj[key][typeId] = n; else delete obj[key][typeId]; };
 // Bed sizes are the admin's own list. A rename moves every bed of that size with it.
 window.lnDefaultSize = () => { const z = LN.draft.bedSizes; return (z.find((x) => x.name === 'Double') || z[0] || { name: '' }).name; };

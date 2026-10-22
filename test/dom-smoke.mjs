@@ -283,6 +283,24 @@ try {
   await w.lnRevDamaged(dirty, true); await sleep(80);
   l2 = (await handleRequest({ method: 'GET', path: '/api/linen', headers: H })).body;
   ok('"Still usable" puts damage back in the soiled bin', l2.pieces.find(p => p.code === dirty).status === 'soiled' && w.document.querySelectorAll('.ln-rev').length === revCount - 1);
+  out.push('\n▶ A room booked as Double or Triple');
+  let l3 = (await handleRequest({ method: 'GET', path: '/api/linen', headers: H })).body;
+  await handleRequest({ method: 'PUT', path: '/api/linen/setup', headers: H, body: { rooms: [...l3.rooms.map(x => ({ ...x, originalName: x.name })), {
+    name: 'Mframadan', beds: [{ label: 'Bed 1', size: 'Double' }, { label: 'Extra bed', size: 'Single', altOnly: true }], towels: { btowel: 2 }, alt: { mainName: 'Double', name: 'Triple', towels: { btowel: 3 } } }] } });
+  w.lnGo('rooms'); await sleep(80);
+  const mfCard = [...w.document.querySelectorAll('.ln-room')].find(c => /Mframadan/.test(c.textContent));
+  ok('reception sees a Booked as Double | Triple switch', mfCard && mfCard.querySelectorAll('.ln-book button').length === 2 && /Double/.test(mfCard.querySelector('.ln-book button.on').textContent));
+  ok('the extra bed shows as a sofa, with no Guest left button', /Extra bed\s*Single · Sofa/.test(mfCard.textContent) && mfCard.querySelectorAll('.ln-gl').length === 1, mfCard.textContent);
+  await w.lnBooking(l3.rooms.length, true); await sleep(80);
+  l3 = (await handleRequest({ method: 'GET', path: '/api/linen', headers: H })).body;
+  ok('switching to Triple is saved', l3.rooms.find(x => x.name === 'Mframadan').altOn === true);
+  w.lnGo('staff'); await sleep(80);
+  w.lsGo('bed', { room: 'Mframadan' }); await sleep(30);
+  const tiles = [...w.document.querySelectorAll('.ls-room')].map(t => t.textContent.replace(/\s+/g, ' ').trim());
+  ok('staff screens show Booked as Triple, the extra bed to make, and 3 towels', /Booked as Triple/.test(w.document.querySelector('#view').textContent) && tiles.some(t => /Extra bed.*Not made/.test(t)), tiles.join(' | '));
+  w.lsPickPlace(2); await sleep(30);
+  ok('the towels now ask for three', w.document.querySelectorAll('.ls-slot').length === 3, w.document.querySelectorAll('.ls-slot').length + '');
+  w.lsHome();
   w.lnGo('staff'); await sleep(80);
   ok('admins can open the staff screens', /What are you doing\?/.test(w.document.querySelector('#view').textContent) && /Wash the dirty bin/.test(w.document.querySelector('#view').textContent));
 } catch (err) {

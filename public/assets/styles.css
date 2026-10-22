@@ -386,3 +386,8 @@ kbd.ui { display: inline-block; font: inherit; font-size: .92em; font-weight: 60
 .ln-gl:hover { background: var(--hover); border-color: var(--warn); }
 .ln-gl-done { display: block; text-align: center; background: #fef3c7; color: #92400e; border-color: #fde68a; }
 .ln-places { align-items: start; }
+.ln-book { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0 0 8px; font-size: 13px; }
+.ln-book span { color: var(--muted); }
+.ln-book button { background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; font-size: 13px; }
+.ln-book button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.ln-sofa { white-space: nowrap; font-size: 13px; }
