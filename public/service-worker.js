@@ -6,7 +6,7 @@
 // updates always show up when online. Only images/icons are cache-first. Bump
 // CACHE whenever you want to force old caches to be cleared.
 
-const CACHE = 'laundry-v20';
+const CACHE = 'laundry-v21';
 const CORE = [
   '/app', '/app.html', '/assets/app.js', '/assets/guide.js', '/assets/linen.js', '/assets/linen-simple.js', '/assets/styles.css',
   '/favicon.svg', '/icon-192.png', '/icon-512.png', '/manifest.webmanifest',

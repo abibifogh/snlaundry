@@ -401,3 +401,6 @@ kbd.ui { display: inline-block; font: inherit; font-size: .92em; font-weight: 60
 .ls-type-row .cd { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 700; font-size: 16px; margin-right: 8px; }
 .ls-type-row small { display: block; color: var(--muted); font-size: 14px; }
 .ls-type-hint { margin: 0; color: var(--muted); font-size: 15px; }
+
+/* ---- "new version ready" bar ---- */
+.update-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom, 0px) + 16px); z-index: 90; display: flex; align-items: center; gap: 12px; background: var(--ink); color: #fff; padding: 10px 12px 10px 16px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.25); font-size: 14px; max-width: calc(100% - 32px); flex-wrap: wrap; }
