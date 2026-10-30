@@ -613,7 +613,7 @@ kbd.ui { display: inline-block; font: inherit; font-size: .92em; font-weight: 60
 .ln-head .hint { margin: 4px 0 0; }
 .ln-filters { display: flex; gap: 6px; flex-wrap: wrap; }
 .ln-quick { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 16px; }
-.ln-qbtn { background: var(--card); color: var(--ink); border: 1px solid var(--line); text-align: left; display: grid; gap: 3px; padding: 12px 14px; font-weight: 400; }
+.ln-qbtn { background: var(--card); color: var(--ink); border: 1px solid var(--line); text-align: left; display: grid; align-content: start; justify-content: stretch; gap: 3px; height: auto; min-height: 64px; padding: 12px 14px; font-weight: 400; white-space: normal; }
 .ln-qbtn:hover { background: var(--hover); border-color: var(--accent); }
 .ln-qbtn b { font-size: 14px; }
 .ln-qbtn span { font-size: 12px; color: var(--muted); }
