@@ -304,13 +304,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ---------------- brand ----------------
-function applyBrand(s) {
-  if (s.accentColor) {
-    document.documentElement.style.setProperty('--accent', s.accentColor);
-    const meta = document.querySelector('meta[name="theme-color"]'); if (meta) meta.content = s.accentColor;
-  }
-  document.documentElement.style.setProperty('--hover', s.hoverColor || '#FFF8ED');
-}
+function applyBrand(s) { if (window.applyBrandColors) applyBrandColors(s); }
 function monogram(name) { const w = String(name || 'Laundry').trim().split(/\s+/); return ((w[0] || 'L')[0] + (w[1] ? w[1][0] : '')).toLowerCase(); }
 
 
@@ -437,8 +431,7 @@ async function showLock() {
   hideAll(); $('#lockScreen').classList.remove('hidden'); closeMenus();
   state.pin = ''; renderPinDots(); notice($('#pinMsg'), '', '');
   try { const s = await (await fetch('/api/public-settings')).json();
-    if (s.accentColor) applyBrand(s);
-    else if (s.hoverColor) document.documentElement.style.setProperty('--hover', s.hoverColor);
+    applyBrand(s);
     $('#lockName').textContent = s.hostelName || 'Laundry';
     if (s.logoDataUrl && !$('#lockBrand img')) { const i = document.createElement('img'); i.src = s.logoDataUrl; i.alt = ''; $('#lockBrand').prepend(i); }
   } catch {}
@@ -783,6 +776,7 @@ function buildTabs() {
   $('#moreMenu').innerHTML = tabs.slice(4).map(t => `<button type="button" onclick="closeMenus();selectTab('${t.id}')">${ic(TAB_ICON[t.id], 'sm')}${tabLabel(t.id)}</button>`).join('');
 }
 function selectTab(id) {
+  if (state.tab === 'settings' && id !== 'settings' && state.settings) applyBrand(state.settings); // drop an unsaved colour preview
   state.tab = id; closeMenus();
   document.querySelectorAll('#tabs button').forEach(b => { b.classList.toggle('active', b.dataset.tab === id); if (b.dataset.tab === id) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   $('#viewTitle').textContent = tabLabel(id);
@@ -1555,7 +1549,7 @@ window.openCashier = (c) => {
     <input id="cshPin" inputmode="numeric" maxlength="8" placeholder="${c ? '••••' : 'e.g. 4821'}">
     <div id="permBox" style="display:${c && c.role === 'admin' ? 'none' : 'block'};margin-top:10px">
       <label>Permissions</label>
-      <div style="background:#f9fafb;border-radius:10px;padding:10px 14px">${checks}</div>
+      <div style="background:var(--sunk);border-radius:10px;padding:10px 14px">${checks}</div>
     </div>
     ${c ? `<label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-weight:400"><input type="checkbox" id="cshActive" style="width:auto" ${c.active ? 'checked' : ''}> Active</label>` : ''}
     <button class="btn-full" style="margin-top:16px" onclick="saveCashier(${c ? `'${c.id}'` : 'null'})">Save</button>
@@ -1628,10 +1622,6 @@ async function renderSettings(view) {
     <div class="card">
       <h3 style="margin-top:0">Branding</h3>
       <label>Hostel / property name</label><input id="stName" value="${esc(s.hostelName || '')}">
-      <div class="row">
-        <div><label>Accent colour</label><input id="stColor" type="color" value="${s.accentColor || '#0f766e'}" style="height:44px"></div>
-        <div><label>Hover highlight colour</label><input id="stHover" type="color" value="${(s.hoverColor || '#FFF8ED').toLowerCase()}" style="height:44px"></div>
-      </div>
       <label>Logo</label>
       <div style="display:flex;gap:12px;align-items:center">
         <img id="logoPreview" src="${s.logoDataUrl || ''}" style="max-height:46px;${s.logoDataUrl ? '' : 'display:none'}">
@@ -1639,6 +1629,7 @@ async function renderSettings(view) {
         ${s.logoDataUrl ? '<button class="small secondary" onclick="clearLogo()">Remove</button>' : ''}
       </div>
     </div>
+    ${colorsCard(s)}
     <div class="card">
       <h3 style="margin-top:0">Rooms</h3>
       <p class="hint">Room names cashiers pick from when accepting an order — one per line. Leave empty to let them type room names freely.</p>
@@ -1692,7 +1683,7 @@ async function renderSettings(view) {
       <label>Alert after ready for (hours)</label>
       <input id="stReadyStuck" type="number" min="0.25" step="0.25" value="${s.readyStuckHours}">
       <label>Also email these staff</label>
-      <div style="background:#f9fafb;border:1px solid var(--line);border-radius:10px;padding:8px 12px">
+      <div style="background:var(--sunk);border:1px solid var(--line);border-radius:10px;padding:8px 12px">
         ${staffList.length ? staffList.map(c => `<label style="display:flex;gap:8px;align-items:center;font-weight:400;margin:4px 0;font-size:14px"><input type="checkbox" class="readyUser" value="${c.id}" style="width:auto" ${(s.readyAlertUserIds || []).includes(c.id) ? 'checked' : ''} ${c.email ? '' : 'disabled'}> ${esc(c.name)} <span class="muted">${c.email ? '(' + esc(c.email) + ')' : '— no email set'}</span></label>`).join('') : '<p class="muted" style="font-size:13px;margin:2px 0">No staff added yet.</p>'}
       </div>
       <p class="muted" style="font-size:12px;margin-top:6px">Staff need an email address (set it under Cashiers) to be selectable.</p>
@@ -1757,7 +1748,7 @@ async function renderSettings(view) {
       <div id="devList" class="muted">Loading…</div>
     </div>
 
-    <div class="card" style="margin-top:20px;border:1px solid #f0cfc9">
+    <div class="card" style="margin-top:20px;box-shadow:inset 0 0 0 1px color-mix(in oklab, var(--bad) 35%, var(--surface))">
       <h3 style="margin-top:0;color:var(--danger)">Delete orders</h3>
       <p class="hint">Permanently remove all orders created within a date range. This cannot be undone.</p>
       <div id="delMsg"></div>
@@ -1944,10 +1935,59 @@ window.previewLogo = (input) => {
   reader.readAsDataURL(f);
 };
 window.clearLogo = () => { state._newLogo = ''; $('#logoPreview').style.display = 'none'; };
+// ---- colours: every screen paints from these, and they preview live while you pick ----
+const STAGE_DEFAULTS = { new: '#64748b', accepted: '#2563eb', cleaning: '#d97706', ready: '#16a34a' };
+const STAGE_NAMES = { new: 'New', accepted: 'Accepted', cleaning: 'Cleaning', ready: 'Ready' };
+function colorsCard(s) {
+  const d = window.BRAND_DEFAULTS || {};
+  const sc = s.stageColors || {};
+  const pick = (id, label, value, hint, extra = '') => `<div class="cpick"><input type="color" id="${id}" value="${esc(value)}" oninput="previewColors(event)" aria-label="${esc(label)}"${extra}><div><b>${label}</b><small>${hint}</small></div></div>`;
+  return `<div class="card">
+    <div class="card-h" style="margin-bottom:2px"><h3 style="margin:0">Colours</h3><button type="button" class="small secondary" style="margin-left:auto" onclick="resetColors()">Restore default colours</button></div>
+    <p class="hint">Every screen uses these, staff and guest pages alike. Changes show straight away; press Save at the bottom to keep them.</p>
+    <div class="cpicks">
+      ${pick('stColor', 'Accent', (s.accentColor || d.accentColor).toLowerCase(), 'Buttons, selected tabs, links and the main chart colour')}
+      ${pick('stAccent2', 'Second colour', (s.accent2Color || getComputedStyle(document.documentElement).getPropertyValue('--accent-2').trim() || '#6fada8').toLowerCase(), 'Second chart colour (card payments, linen in use) and staff screen tiles')}
+      ${pick('stHover', 'Hover highlight', (s.hoverColor || d.hoverColor).toLowerCase(), 'Background when you point at a row, tile or button')}
+    </div>
+    <label class="toggle-inline"><input type="checkbox" id="stAccent2Auto" ${s.accent2Color ? '' : 'checked'} onchange="previewColors()"> Second colour: use a lighter shade of the accent</label>
+    <label style="margin-top:16px">Order stages</label>
+    <div class="cpicks four">
+      ${Object.keys(STAGE_DEFAULTS).map((k) => pick('stStage_' + k, STAGE_NAMES[k], (sc[k] || STAGE_DEFAULTS[k]).toLowerCase(), 'Board lane and status')).join('')}
+    </div>
+    <div class="cpreview" aria-hidden="true">
+      <button type="button" tabindex="-1">Start cleaning</button>
+      <span class="pills"><button type="button" tabindex="-1" aria-pressed="true">Today</button><button type="button" tabindex="-1" class="is-hover">7 days</button></span>
+      <span class="cbars"><i style="background:var(--accent);width:58%"></i><i style="background:var(--accent-2);width:30%"></i></span>
+      <span class="cdots">${['new', 'acc', 'cln', 'rdy'].map((v) => `<i style="background:var(--s-${v})"></i>`).join('')}</span>
+    </div>
+  </div>`;
+}
+function colorDraft() {
+  const auto = $('#stAccent2Auto').checked;
+  const stageColors = {};
+  for (const k of Object.keys(STAGE_DEFAULTS)) { const v = $('#stStage_' + k).value.toLowerCase(); if (v !== STAGE_DEFAULTS[k]) stageColors[k] = v; }
+  return { accentColor: $('#stColor').value, accent2Color: auto ? '' : $('#stAccent2').value, hoverColor: $('#stHover').value, stageColors };
+}
+window.previewColors = (e) => {
+  if (e && e.target && e.target.id === 'stAccent2') $('#stAccent2Auto').checked = false; // picking a second colour turns the automatic shade off
+  applyBrandColors(colorDraft());
+  // keep the greyed-out second picker showing the shade it will use
+  if ($('#stAccent2Auto').checked) $('#stAccent2').value = getComputedStyle(document.documentElement).getPropertyValue('--accent-2').trim();
+};
+window.resetColors = () => {
+  const d = window.BRAND_DEFAULTS;
+  $('#stColor').value = d.accentColor; $('#stHover').value = d.hoverColor.toLowerCase();
+  $('#stAccent2Auto').checked = true;
+  for (const [k, v] of Object.entries(STAGE_DEFAULTS)) $('#stStage_' + k).value = v;
+  previewColors();
+  notice($('#setMsg'), 'ok', 'Default colours are back. Press Save to keep them.');
+  window.scrollTo(0, 0);
+};
 window.saveSettings = async () => {
   const [code, symbol] = $('#stCurrency').value.split('|');
   const body = {
-    hostelName: $('#stName').value.trim(), accentColor: $('#stColor').value, hoverColor: $('#stHover').value,
+    hostelName: $('#stName').value.trim(), ...colorDraft(),
     currency: { code, symbol }, rooms: $('#stRooms').value, pricePerLoad: $('#stPrice').value, piecesPerLoad: $('#stPieces').value,
     requireEmail: $('#stReqEmail').checked, requireRoomOnAccept: $('#stReqRoom').checked,
     turnaroundHours: $('#stTurn').value,
@@ -1965,8 +2005,7 @@ window.saveSettings = async () => {
     state.settings = await api('PUT', '/settings', body);
     delete state._newLogo;
     $('#topName').textContent = state.settings.hostelName || 'Laundry';
-    document.documentElement.style.setProperty('--accent', state.settings.accentColor);
-    document.documentElement.style.setProperty('--hover', state.settings.hoverColor || '#FFF8ED');
+    applyBrand(state.settings);
     notice($('#setMsg'), 'ok', 'Settings saved.');
     window.scrollTo(0, 0);
   } catch (e) { notice($('#setMsg'), 'err', e.message); }

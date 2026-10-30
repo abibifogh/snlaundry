@@ -300,6 +300,19 @@ try {
   r = await api('PUT', '/api/settings', { headers: H(adminT), body: { rooms: 'Duafe\nSankofa, Adinkra\nDuafe' } });
   ok('rooms parsed and de-duped', Array.isArray(r.body.rooms) && r.body.rooms.length === 3 && r.body.rooms.includes('Duafe'), JSON.stringify(r.body.rooms));
 
+  section('Colours: chosen in Settings, checked, and restorable');
+  r = await api('GET', '/api/settings', { headers: H(adminT) });
+  ok('defaults: built-in accent, automatic second colour, built-in stage colours', r.body.accentColor === '#0f766e' && r.body.accent2Color === '' && Object.keys(r.body.stageColors).length === 0, JSON.stringify(r.body).slice(0, 200));
+  r = await api('PUT', '/api/settings', { headers: H(adminT), body: { accentColor: '#5d3f15', accent2Color: '#a0522d', hoverColor: '#fff8ed', stageColors: { new: '#777777', ready: '#2e7d32', cleaning: 'orange', bogus: '#123456' } } });
+  ok('saves accent, second colour and valid stage colours', r.body.accentColor === '#5d3f15' && r.body.accent2Color === '#a0522d' && r.body.stageColors.new === '#777777' && r.body.stageColors.ready === '#2e7d32', JSON.stringify(r.body.stageColors));
+  ok('drops colours that are not #rrggbb, and unknown stages', !('cleaning' in r.body.stageColors) && !('bogus' in r.body.stageColors));
+  r = await api('GET', '/api/public-settings');
+  ok('guest pages get the colours too', r.body.accent2Color === '#a0522d' && r.body.stageColors.new === '#777777');
+  r = await api('PUT', '/api/settings', { headers: H(adminT), body: { accentColor: 'red; background:url(x)' } });
+  ok('a bad accent falls back to the default', r.body.accentColor === '#0f766e');
+  r = await api('PUT', '/api/settings', { headers: H(adminT), body: { accentColor: '#0f766e', accent2Color: '', hoverColor: '#FFF8ED', stageColors: {} } });
+  ok('restore defaults clears the custom colours', r.body.accent2Color === '' && Object.keys(r.body.stageColors).length === 0 && r.body.hoverColor === '#FFF8ED');
+
   section('Backup export / restore');
   r = await api('GET', '/api/backup', { headers: H(adminT) });
   ok('export returns a full snapshot', r.status === 200 && r.body.app === 'hostel-laundry' && Array.isArray(r.body.cashiers) && Array.isArray(r.body.orders));

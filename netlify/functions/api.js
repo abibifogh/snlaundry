@@ -71,6 +71,7 @@ export async function handleRequest({ method, path, query = {}, body = {}, heade
       const s = await L.getSettings();
       return json(200, {
         hostelName: s.hostelName, logoDataUrl: s.logoDataUrl, accentColor: s.accentColor, hoverColor: s.hoverColor,
+        accent2Color: s.accent2Color, stageColors: s.stageColors,
         currency: s.currency, piecesPerLoad: s.piecesPerLoad, pricePerLoad: s.pricePerLoad,
         turnaroundHours: s.turnaroundHours, requireEmail: s.requireEmail,
       });
