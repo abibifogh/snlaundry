@@ -4,67 +4,81 @@ const publicId = new URLSearchParams(location.search).get('id');
 let settings = { currency: { symbol: '' } };
 let order = null;
 
-const STAGES = ['accepted', 'cleaning', 'ready', 'completed'];
-const LABELS = { new: 'Received', accepted: 'Accepted', cleaning: 'Cleaning', ready: 'Ready', completed: 'Completed', cancelled: 'Cancelled' };
+const TITLES = { new: 'Waiting for reception', accepted: 'Accepted', cleaning: 'In the wash', ready: 'Ready for pickup', completed: 'Collected', cancelled: 'Cancelled' };
+const LINES = {
+  new: 'Bring your bag to reception. They’ll accept it and confirm the price.',
+  accepted: 'Reception has your bag. It goes into the wash next.',
+  cleaning: 'Your laundry is in the wash. We’ll email you when it’s ready.',
+  ready: 'It’s folded and waiting for you at reception.',
+  completed: 'Collected. Thanks for staying with us.',
+  cancelled: 'This order was cancelled. Please ask at reception if that’s unexpected.',
+};
 
 async function loadBranding() {
   try {
     settings = await (await fetch('/api/public-settings')).json();
-    if (settings.accentColor) document.documentElement.style.setProperty('--accent', settings.accentColor);
+    if (settings.accentColor) {
+      document.documentElement.style.setProperty('--accent', settings.accentColor);
+      const meta = document.querySelector('meta[name="theme-color"]'); if (meta) meta.content = settings.accentColor;
+    }
     const name = settings.hostelName || 'Laundry Service';
     $('#brandName').textContent = name;
     document.title = `Track your Laundry · ${name}`;
+    const mono = $('#brandMono');
     if (settings.logoDataUrl) {
-      const img = document.createElement('img'); img.src = settings.logoDataUrl; img.alt = name;
-      $('#brand').prepend(img);
+      const img = document.createElement('img'); img.src = settings.logoDataUrl; img.alt = name; mono.replaceWith(img);
+    } else {
+      const w = name.trim().split(/\s+/); mono.textContent = ((w[0] || 'L')[0] + (w[1] ? w[1][0] : '')).toLowerCase();
     }
   } catch {}
 }
 
-function fmt(iso) {
-  if (!iso) return '—';
-  try { return new Date(iso).toLocaleString('en-GB', { weekday:'short', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }); }
-  catch { return iso; }
+function hm(iso) { return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }); }
+function when(iso) {
+  if (!iso) return '';
+  const d = new Date(iso), n = new Date();
+  const days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - new Date(n.getFullYear(), n.getMonth(), n.getDate())) / 864e5);
+  if (days === 0) return 'Today ' + hm(iso); if (days === 1) return 'Tomorrow ' + hm(iso); if (days === -1) return 'Yesterday ' + hm(iso);
+  return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) + ', ' + hm(iso);
 }
-function esc(s){ return String(s??'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+function money(n) { const v = Number(n) || 0; return `${settings.currency?.symbol || ''}${Number.isInteger(v) ? v : v.toFixed(2)}`; }
+const CHECK = '<svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>';
 
-function renderProgress(status) {
-  if (status === 'cancelled') return `<div class="notice err">This order was cancelled. Please contact reception.</div>`;
-  const curIdx = STAGES.indexOf(status);
-  return `<div style="display:flex;justify-content:space-between;gap:4px">` + STAGES.map((s, i) => {
-    const done = curIdx >= i && curIdx >= 0;
-    const color = done ? 'var(--accent)' : 'var(--line)';
-    return `<div style="flex:1;text-align:center">
-      <div style="height:8px;border-radius:99px;background:${color};margin-bottom:6px"></div>
-      <div style="font-size:11px;color:${done ? 'var(--ink)' : 'var(--muted)'}">${LABELS[s]}</div>
-    </div>`;
-  }).join('') + `</div>`;
+function renderProgress(o) {
+  const steps = [['Order placed', o.createdAt], ['Accepted at reception', o.acceptedAt], ['Washing', o.cleaningAt], ['Ready for pickup', o.readyAt], ['Collected', o.completedAt]];
+  const order = ['new', 'accepted', 'cleaning', 'ready', 'completed'];
+  const idx = o.status === 'cancelled' ? steps.reduce((m, s, i) => (s[1] ? i : m), 0) : order.indexOf(o.status);
+  return steps.map(([label, t], i) => {
+    const cls = o.status === 'cancelled' ? (i <= idx ? 'done' : 'todo') : (i < idx || (i === idx && i === 4) ? 'done' : i === idx ? 'now' : 'todo');
+    const sub = t ? when(t) : (o.status !== 'cancelled' && i === idx + 1 ? 'Next' : '');
+    return `<div class="vstep ${cls}"><span class="o">${cls === 'done' ? CHECK : ''}</span><span><b>${label}</b><small>${sub}</small></span></div>`;
+  }).join('');
 }
 
 function renderDetails(o) {
-  const cur = settings.currency?.symbol || '';
   const rows = [
-    ['Guest', esc(o.guestName)],
-    o.room ? ['Room name', esc(o.room)] : null,
-    ['Items', `${o.items} pcs · ${o.loads} load(s)`],
-    o.price != null ? ['Total', `${cur}${Number(o.price).toFixed(2)}`] : null,
+    ['Name', esc(o.guestName)],
+    o.room ? ['Room', esc(o.room)] : null,
+    ['Items', `${o.items} · ${o.loads} load${o.loads > 1 ? 's' : ''}`],
+    o.price != null ? ['Total', money(o.price)] : null,
     ['Payment', paymentText(o)],
-    o.pickupAt ? ['Ready by', fmt(o.pickupAt)] : null,
-    ['Placed', fmt(o.createdAt)],
+    ['Placed', when(o.createdAt)],
   ].filter(Boolean);
-  return rows.map(([k, v]) => `<tr><td class="muted">${k}</td><td style="text-align:right;font-weight:600">${v}</td></tr>`).join('');
+  return rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
 }
 
 function paymentText(o) {
-  if (o.paymentStatus === 'paid') return `Paid ✓${o.paymentMethod ? ' (' + o.paymentMethod + ')' : ''}`;
-  if (o.paymentTiming === 'now') return `Pay now${o.paymentMethod ? ' — ' + o.paymentMethod : ''} (on drop-off)`;
+  if (o.paymentStatus === 'paid') return `Paid, thank you${o.paymentMethod ? ' (' + esc(o.paymentMethod) + ')' : ''}`;
+  if (o.paymentStatus === 'partial') return 'Part paid';
+  if (o.paymentTiming === 'now') return `Pay at drop-off${o.paymentMethod ? ' · ' + esc(o.paymentMethod) : ''}`;
   return 'Pay at pickup';
 }
 
 function renderThread(messages) {
-  if (!messages.length) return `<p class="muted center" style="padding:14px">No messages yet.</p>`;
-  return messages.map(m => `<div class="msg ${m.sender}">
-    <div class="who">${m.sender === 'staff' ? esc(m.staffName || 'Reception') : 'You'} · ${fmt(m.at)}</div>
+  if (!messages.length) return `<p class="muted" style="margin:0">No messages yet.</p>`;
+  return messages.map(m => `<div class="msg ${m.sender === 'guest' ? 'staff' : 'guest'}">
+    <div class="who">${m.sender === 'staff' ? esc(m.staffName || 'Reception') : 'You'} · ${when(m.at)}</div>
     ${esc(m.text)}</div>`).join('');
 }
 
@@ -75,10 +89,14 @@ async function load() {
   order = await res.json();
   $('#content').classList.remove('hidden');
   $('#oNum').textContent = order.number;
-  const badge = $('#oStatus');
-  badge.textContent = LABELS[order.status] || order.status;
-  badge.className = `badge b-${order.status}`;
-  $('#progress').innerHTML = renderProgress(order.status);
+  $('#oTitle').textContent = TITLES[order.status] || order.status;
+  $('#oLine').textContent = LINES[order.status] || '';
+  const ready = $('#oReady');
+  if (order.pickupAt && !['completed', 'cancelled'].includes(order.status)) {
+    ready.innerHTML = `<div><small>Ready by</small><b style="font-size:17px">${when(order.pickupAt)}</b></div>`;
+    ready.classList.remove('hidden');
+  } else ready.classList.add('hidden');
+  $('#progress').innerHTML = renderProgress(order);
   $('#oDetails').innerHTML = renderDetails(order);
   const thread = $('#thread');
   const atBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 40;

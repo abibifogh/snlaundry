@@ -138,6 +138,13 @@ export async function handleRequest({ method, path, query = {}, body = {}, heade
         const user = await requirePerm(headers, 'advanceStatus');
         return json(200, await L.setDelayReason(id, body.reason, user));
       }
+      // Undo needs no extra permission: only the person who made the move may, and only briefly.
+      if (m === 'POST' && id && parts[2] === 'undo') {
+        const payload = requireUser(headers);
+        const user = await L.getCashierById(payload.id);
+        if (!user || !user.active) throw L.httpError(401, 'Session no longer valid.');
+        return json(200, await L.undoLastMove(id, user));
+      }
       if (m === 'POST' && id && parts[2] === 'revert') {
         const user = await requirePerm(headers, 'reverseStatus');
         return json(200, await L.revertStatus(id, user, body.reason));
@@ -326,6 +333,7 @@ function guestView(o) {
     price: o.price, paymentStatus: o.paymentStatus, paymentTiming: o.paymentTiming,
     paymentMethod: o.paymentMethod, pickupAt: o.pickupAt,
     createdAt: o.createdAt, acceptedAt: o.acceptedAt,
+    cleaningAt: L.stageAt(o, 'cleaning'), readyAt: L.stageAt(o, 'ready'), completedAt: L.stageAt(o, 'completed'),
     messages: (o.messages || []).map((mm) => ({ sender: mm.sender, staffName: mm.staffName, text: mm.text, at: mm.at })),
   };
 }

@@ -2,8 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Reception · Laundry</title>
+  <script>/* apply the saved light/dark choice before first paint */try{var t=localStorage.getItem('laundry_theme');if(t==='dark'||t==='light')document.documentElement.dataset.theme=t;}catch(e){}</script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="manifest" href="/manifest.webmanifest" />
@@ -11,6 +12,9 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Laundry" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=Sofia+Sans+Condensed:wght@600;700;800&display=swap" />
   <link rel="stylesheet" href="/assets/styles.css" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
@@ -36,35 +40,62 @@
 </div>
 
 <!-- ============ LOCK / PIN SWITCH SCREEN ============ -->
-<div id="lockScreen" class="wrap hidden">
-  <div class="brandbar center" id="lockBrand" style="justify-content:center">
-    <div><div class="name" id="lockName">Laundry</div><div class="sub">Staff terminal — locked</div></div>
+<div id="lockScreen" class="hidden">
+  <div class="lock-l">
+    <span class="holes" aria-hidden="true"></span>
+    <div class="brandbar" id="lockBrand">
+      <div><div class="name" id="lockName">Laundry</div><div class="sub">Laundry · staff terminal</div></div>
+    </div>
+    <div class="clock" id="lockClock" aria-hidden="true"></div>
+    <div class="date" id="lockDate"></div>
+    <div class="shiftcard hidden" id="lockShift"></div>
   </div>
-  <div class="card center">
-    <h2>Enter your PIN</h2>
-    <p class="hint">Each cashier has their own PIN. No full login needed.</p>
-    <div class="pindots" id="pinDots"></div>
-    <div id="pinMsg"></div>
-    <div class="pinpad" id="pinpad"></div>
+  <div class="lock-r">
+    <div class="card pinbox">
+      <h2>Enter your PIN</h2>
+      <p class="hint">Your PIN signs you in as yourself.</p>
+      <div class="pindots" id="pinDots" aria-live="polite"></div>
+      <div id="pinMsg" role="alert"></div>
+      <div class="pinpad" id="pinpad"></div>
+    </div>
   </div>
 </div>
 
 <!-- ============ MAIN APP ============ -->
 <div id="app" class="hidden">
-  <div class="topbar">
-    <div class="topbar-inner">
-      <span class="name" id="topName">Laundry</span>
-      <span class="spacer"></span>
-      <span class="who">Signed in: <b id="whoName"></b> <span class="pill" id="whoRole"></span></span>
-      <button class="ghost small" id="lockBtn">🔒 Lock / switch</button>
+  <div class="shell">
+    <nav class="rail" id="rail" aria-label="Main">
+      <div class="mono" id="railMono" aria-hidden="true"></div>
+      <div class="tabs" id="tabs"></div>
+      <button class="navbtn" id="moreBtn" type="button" aria-haspopup="menu"></button>
+      <div class="rail-spacer"></div>
+      <button class="navbtn" id="lockBtn" type="button"></button>
+    </nav>
+    <div class="main">
+      <header class="apphead">
+        <h1 id="viewTitle">Orders</h1>
+        <div class="top-tools" id="topTools"></div>
+        <button class="chip-shift hidden" id="shiftChip" type="button"></button>
+        <button class="avatar" id="avatarBtn" type="button" aria-haspopup="menu" aria-label="Account menu"></button>
+        <span class="hidden" id="topName"></span>
+      </header>
+      <main class="content" id="scroller"><div id="view"></div></main>
     </div>
-    <div class="tabs" id="tabs"></div>
   </div>
-
-  <div class="wrap-wide" style="padding-top:18px">
-    <div id="view"></div>
+  <div class="backdrop hidden" id="menuBackdrop"></div>
+  <div class="menu hidden" id="userMenu" role="menu">
+    <div class="who"><b id="whoName"></b><small id="whoRole"></small></div>
+    <div class="sep"></div>
+    <div id="menuControls"></div>
+    <div class="mi" style="padding-bottom:2px"><span>Appearance</span></div>
+    <div class="seg3" id="themeSeg"></div>
+    <div class="sep"></div>
+    <button type="button" id="menuLock"></button>
   </div>
+  <div class="menu hidden" id="shiftMenu" role="menu"></div>
+  <div class="menu hidden" id="moreMenu" role="menu"></div>
 </div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
 
 <!-- generic modal host -->
 <div id="modalHost"></div>

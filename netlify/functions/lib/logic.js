@@ -330,6 +330,12 @@ export async function acceptOrder(id, data, actor) {
     o.acceptedAt = nowIso();
     o.acceptedBy = actorRef(actor);
     o.room = room || o.room;
+    // Reception may correct the item count after counting the bag at the desk.
+    let countNote = '';
+    if (data.items != null && data.items !== '') {
+      const n = Math.max(1, Math.floor(Number(data.items)) || 1);
+      if (n !== o.items) { countNote = ` · counted ${n} items (guest said ${o.items})`; o.items = n; }
+    }
     o.loads = computeLoads(o.items, settings.piecesPerLoad);
     const computed = o.loads * settings.pricePerLoad;
     let priceNote = '';
@@ -354,7 +360,7 @@ export async function acceptOrder(id, data, actor) {
       discountNote = ` · discount ${applied.code} −${applied.amount}`;
     }
     addLog(o, actor, 'accepted',
-      `Accepted · room ${o.room || '—'} · ${settings.currency.symbol}${o.price} · ready by ${o.pickupAt}${priceNote}${discountNote}`);
+      `Accepted · room ${o.room || '—'} · ${settings.currency.symbol}${o.price} · ready by ${o.pickupAt}${countNote}${priceNote}${discountNote}`);
     // Reception may collect payment right at acceptance (full, or a partial amount
     // if allowed).
     if (data.paymentStatus === 'paid' || (data.amountPaid != null && data.amountPaid !== '')) {
@@ -383,12 +389,15 @@ export async function advanceStatus(id, target, actor) {
     if (expected === 'completed' && o.paymentStatus !== 'paid') {
       throw httpError(409, 'Payment must be collected before the order can be marked picked up.');
     }
+    const from = o.status;
     o.status = expected;
     o.delayReasonAt = null; // moving on clears any delay snooze
     if (STAGE_ACTOR_FIELD[expected]) o[STAGE_ACTOR_FIELD[expected]] = actorRef(actor);
+    if (expected === 'cleaning') o.cleaningAt = nowIso();
     if (expected === 'ready') { o.readyAt = nowIso(); o.readyAlertedAt = null; }
     if (expected === 'completed') o.completedAt = nowIso();
     addLog(o, actor, 'status', `Status → ${expected}`);
+    recordMove(o, from, expected, actor);
     if (['cleaning', 'ready', 'completed'].includes(expected)) {
       await notifyGuest(expected, o, settings);
     }
@@ -404,9 +413,48 @@ export async function revertStatus(id, actor, reason) {
     const from = o.status;
     o.status = prev;
     if (from === 'completed') o.completedAt = null;
+    o.lastMove = null;
     addLog(o, actor, 'reverted', `Moved back ${from} → ${prev}${reason ? ' · ' + reason : ''}`);
     return o;
   });
+}
+
+// ------------------------------------------------------------------- Undo --
+// Whoever just moved an order on (or cancelled it) can take that back for a few
+// seconds, without the Move back permission — a wrong tap shouldn't need a
+// manager. After the window, or for anyone else, Move back works as before.
+// An email already sent to the guest can't be recalled; the next one corrects it.
+export const UNDO_WINDOW_MS = 15000;
+// What each forward move stamps on the order, so undoing it leaves no trace.
+const MOVE_STAMPS = { cleaning: ['cleaningBy', 'cleaningAt'], ready: ['readyBy', 'readyAt', 'readyAlertedAt'], completed: ['completedBy', 'completedAt'] };
+
+function recordMove(o, from, to, actor) {
+  o.lastMove = { from, to, byId: actor?.id || null, at: nowIso() };
+}
+
+export async function undoLastMove(id, actor) {
+  return mutateOrder(id, async (o) => {
+    const mv = o.lastMove;
+    if (!mv || o.status !== mv.to) throw httpError(409, 'There is nothing to undo on this order.');
+    if (!actor?.id || mv.byId !== actor.id) throw httpError(403, 'Only the person who made this change can undo it.');
+    if (Date.now() - new Date(mv.at).getTime() > UNDO_WINDOW_MS) {
+      throw httpError(409, 'Too late to undo. Ask someone who can move orders back.');
+    }
+    o.status = mv.from;
+    for (const f of MOVE_STAMPS[mv.to] || []) o[f] = null;
+    o.lastMove = null;
+    addLog(o, actor, 'undone', `Undid ${mv.from} → ${mv.to}`);
+    return o;
+  });
+}
+
+// When a stage was reached. Newer orders carry the timestamp; older ones only
+// have it in the activity log.
+export function stageAt(o, stage) {
+  const field = { accepted: 'acceptedAt', cleaning: 'cleaningAt', ready: 'readyAt', completed: 'completedAt' }[stage];
+  if (field && o[field]) return o[field];
+  const hit = (o.logs || []).filter((l) => l.action === 'status' && l.detail === `Status → ${stage}`).pop();
+  return hit ? hit.at : null;
 }
 
 function canPartial(actor) {
@@ -603,8 +651,11 @@ export async function deleteOrdersInRange({ from, to } = {}) {
 export async function cancelOrder(id, actor, reason) {
   return mutateOrder(id, async (o) => {
     if (o.status === 'completed') throw httpError(409, 'Completed orders cannot be cancelled');
+    if (o.status === 'cancelled') throw httpError(409, 'This order was already cancelled.');
+    const from = o.status;
     o.status = 'cancelled';
     addLog(o, actor, 'cancelled', reason ? `Cancelled: ${reason}` : 'Cancelled');
+    recordMove(o, from, 'cancelled', actor);
     return o;
   });
 }

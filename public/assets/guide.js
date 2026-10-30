@@ -33,12 +33,12 @@ const GUIDE = {
       title: 'The app: signing in and your board',
       steps: [
         'Open the laundry phone or tablet and enter **your own PIN** — 4 to 8 digits. Never use someone else\'s: the app records who did what, and your name goes on every order you touch.',
-        'You land on **Orders**. Your board has three columns: **New** (guest has ordered, reception hasn\'t accepted yet — nothing for you to do), **Accepted** (reception has taken the bag — your queue) and **Cleaning** (with you now).',
+        'You land on your **Queue**. It has two lists: **Start next** (reception has taken the bag; the most urgent is marked **Next up**) and **In the wash** (started, not yet marked ready). A line at the top says how many new orders are still waiting at reception. There is nothing for you to do with those yet.',
         'Each card shows the guest\'s name, room, number of items and loads, and the pickup time. That card is what you check the bag against.',
-        'Tap a card to open it. The buttons at the bottom are the only ones you need: [[Start cleaning]], [[Mark ready]] and [[🔕 Report a delay]].',
-        'When you finish or step away, tap [[🔒 Lock / switch]] so the next person signs in as themselves.',
+        'The big button on each card is the next step: [[Start cleaning]] or [[Mark ready]]. Tap anywhere else on a card to see its details. To report a delay, open the card, tap [[More]], then [[Report a delay]].',
+        'When you finish or step away, tap your initial in the top corner, then [[Lock or switch user]], so the next person signs in as themselves. On a computer, the [[Lock]] button at the bottom left does the same.',
       ],
-      note: 'You will not see a **Ready for pickup** column. That is reception\'s side of the board — once you mark an order ready it moves there and leaves your screen. That is normal, not a mistake.',
+      note: 'Once you mark an order ready it leaves your screen and goes to reception, who take payment and hand it over. That is normal, not a mistake. Pressed a button by mistake? Tap [[Undo]] on the message at the bottom of the screen straight away.',
     },
 
     {
@@ -51,7 +51,7 @@ const GUIDE = {
         '**Sort it.** Check colours and separate what needs separating. If the guest asked for items to be washed separately, do that. If they didn\'t, use your own judgement — a red sock in a white wash is your problem, not theirs.',
         '**Treat and soak if needed.** Stains get treated first (see *Stains, soaking and whites*). Whites may soak for several hours. Soaking time counts as working on the order — see the next step.',
         '**Press [[Start cleaning]] when you actually begin** — loading the machine, or putting items to soak. This moves the order to **Cleaning** and sends the guest a message that washing has started. Don\'t press it early to clear the queue, and don\'t forget it: the app starts sending reminders about orders that sit in Accepted for about an hour.',
-        '**If you genuinely can\'t start within the hour** — machines full, waiting on a long soak — open the card and press [[🔕 Report a delay]], and type the reason. This quiets the reminder for 30 minutes. If the order still hasn\'t started after that, the reminder comes back. That is the system working, not nagging you.',
+        '**If you genuinely can\'t start within the hour** — machines full, waiting on a long soak — open the card, tap [[More]], then [[Report a delay]], and type the reason. This quiets the reminder for 30 minutes. If the order still hasn\'t started after that, the reminder comes back. That is the system working, not nagging you.',
         '**Wash using the correct setting** from the *Machine quick guide*. Guest items go in the machine set aside for guest laundry when there is a lot on.',
         '**Dry completely.** Never fold or hand over anything damp.',
         '**Fold neatly and count again.** The count must match the card. This second count is what protects the guest, and you.',
@@ -68,12 +68,12 @@ const GUIDE = {
       table: {
         head: ['Situation', 'What to do'],
         rows: [
-          ['Pressed [[Start cleaning]] or [[Mark ready]] by mistake', 'You can\'t move an order backwards. Tell reception or the manager — they have a *Move back* button.'],
+          ['Pressed [[Start cleaning]] or [[Mark ready]] by mistake', 'Tap [[Undo]] on the message at the bottom of the screen straight away. It only stays for a few seconds. After that, tell reception or the manager: they have a *Move back* button.'],
           ['Count in the bag doesn\'t match the card', 'Go back to reception straight away, before washing. Don\'t "fix" the number yourself.'],
           ['Item is damaged or badly stained when it arrives', 'Show reception before washing so the guest can be told it came in that way.'],
           ['Guest sends a message in the app', 'You can\'t reply. Reception handles guest messages — tell them if it\'s about something on your side.'],
           ['Guest asks you directly about payment or pickup', 'Send them to reception. You don\'t take payment and can\'t mark an order picked up.'],
-          ['Order stuck because a machine is broken', 'Press [[🔕 Report a delay]] with the reason, then tell the manager.'],
+          ['Order stuck because a machine is broken', 'Open the card, tap [[More]], then [[Report a delay]] with the reason. Then tell the manager.'],
           ['Something you washed is missing after the handover', 'Tell reception immediately — the app shows who handed over and when, which narrows the search fast.'],
         ],
       },
@@ -85,7 +85,7 @@ const GUIDE = {
       intro: 'Before you wash anything, find out what\'s already in progress. Pending guest laundry is rarely all in one place.',
       steps: [
         'Sweep the laundry area and clear dust. Wipe the ironing table. Check the steam iron and top up its water.',
-        'Sign in to the app and look at **Accepted** and **Cleaning**. Everything in Cleaning is an order somebody started and didn\'t finish — those come first.',
+        'Sign in to the app and look at **Start next** and **In the wash**. Everything in the wash is an order somebody started and didn\'t finish. Those come first.',
         'Check the **dry line** for guest laundry that has been washed and is waiting.',
         'Check **inside every machine** for a load that was left behind.',
         'Check with **reception** for finished guest laundry that was handed over but is still waiting for the guest — so you know it\'s done and don\'t go looking for it.',
@@ -225,8 +225,8 @@ const GUIDE = {
         'Check the dry line, every machine and the ironing area. Anything of a guest\'s that is still out must be somewhere you can name — and its card must still be in **Cleaning**, not marked ready.',
         'Clean linen stored dry and off the floor. Dirty linen separate.',
         'Products back in their places. Iron off and emptied if that is the routine.',
-        'Look once more at **Accepted** and **Cleaning** in the app. If an order in Cleaning is finished and handed over, mark it ready now — don\'t leave the guest waiting for a message until tomorrow.',
-        'Tap [[🔒 Lock / switch]].',
+        'Look once more at **Start next** and **In the wash** in the app. If an order in the wash is finished and handed over, mark it ready now. Don\'t leave the guest waiting for a message until tomorrow.',
+        'Tap your initial, then [[Lock or switch user]].',
       ],
     },
 
@@ -239,7 +239,7 @@ const GUIDE = {
         'Nothing wet left in a machine. Nothing damp stored.',
         'Treat stains; don\'t soak everything by habit.',
         'Right machine, right setting, every time.',
-        'Press [[Start cleaning]] when you start. Press [[Mark ready]] after the handover. Press [[🔕 Report a delay]] when you\'re stuck.',
+        'Press [[Start cleaning]] when you start. Press [[Mark ready]] after the handover. Use [[Report a delay]] when you\'re stuck.',
         'If it doesn\'t match the card, stop and ask.',
       ],
     },
@@ -250,7 +250,7 @@ const GUIDE = {
     { group: 'Start of day', items: [
       'Laundry area swept and clean',
       'Ironing table clean; steam iron checked and filled',
-      'Accepted and Cleaning columns checked in the app',
+      'Start next and In the wash checked in the app',
       'Dry line checked',
       'Every machine checked for a left-behind load',
       'Reception checked for finished guest laundry',
