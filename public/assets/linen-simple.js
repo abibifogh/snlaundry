@@ -32,9 +32,9 @@ const LS_ICON = {
   tick: '<svg width="70" height="70" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
   cross: '<svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   door: '<svg width="64" height="64" viewBox="0 0 48 48" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><rect x="11" y="5" width="26" height="38" rx="2"/><circle cx="31" cy="25" r="1.6" fill="#fff"/></svg>',
-  clean: '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
-  again: '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#2f6fd6" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/></svg>',
-  dmg: '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#c2410c" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3L2 21h20z"/><path d="M12 10v5M12 18v.5"/></svg>',
+  clean: '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" style="stroke:var(--good-solid)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+  again: '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" style="stroke:var(--accent-2)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/></svg>',
+  dmg: '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" style="stroke:var(--warn-solid)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3L2 21h20z"/><path d="M12 10v5M12 18v.5"/></svg>',
 };
 const LS_REASONS = {
   torn: ['Torn', 'damaged', '<svg width="58" height="58" viewBox="0 0 64 64"><rect x="8" y="14" width="48" height="36" rx="5" fill="#9fb3ad"/><path d="M30 14l6 9-7 6 8 8-5 13" stroke="#fff" stroke-width="5" fill="none" stroke-linejoin="round"/></svg>'],

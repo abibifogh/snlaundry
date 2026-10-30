@@ -47,12 +47,19 @@ export function shiftOf(date) {
 }
 
 // ---------------------------------------------------------------- Settings ---
+// The built-in colours. Settings → "Restore default colours" saves these back.
+export const DEFAULT_COLORS = { accentColor: '#0f766e', hoverColor: '#FFF8ED', accent2Color: '', stageColors: {} };
+const STAGE_COLOR_KEYS = ['new', 'accepted', 'cleaning', 'ready'];
+const isHex = (c) => /^#[0-9a-f]{6}$/i.test(String(c || ''));
+
 export function defaultSettings() {
   return {
     hostelName: 'somewhere nice',
     logoDataUrl: '',
-    accentColor: '#0f766e',
-    hoverColor: '#FFF8ED',
+    accentColor: DEFAULT_COLORS.accentColor,
+    hoverColor: DEFAULT_COLORS.hoverColor,
+    accent2Color: DEFAULT_COLORS.accent2Color, // '' = a deeper shade of the accent
+    stageColors: { ...DEFAULT_COLORS.stageColors }, // order stages; empty = the built-in stage colours
     currency: { code: 'GHS', symbol: '₵' },
     rooms: [], // admin-defined room names cashiers pick from
     pricePerLoad: 10,
@@ -110,6 +117,11 @@ export async function updateSettings(patch) {
   next.requireEmail = !!next.requireEmail;
   next.requireRoomOnAccept = !!next.requireRoomOnAccept;
   next.alertRecipients = normalizeEmails(next.alertRecipients);
+  next.accentColor = isHex(next.accentColor) ? next.accentColor : DEFAULT_COLORS.accentColor;
+  next.hoverColor = isHex(next.hoverColor) ? next.hoverColor : DEFAULT_COLORS.hoverColor;
+  next.accent2Color = isHex(next.accent2Color) ? next.accent2Color : '';
+  const sc = next.stageColors && typeof next.stageColors === 'object' ? next.stageColors : {};
+  next.stageColors = Object.fromEntries(STAGE_COLOR_KEYS.filter((k) => isHex(sc[k])).map((k) => [k, sc[k]]));
   // Stamp the logo when it changes so emails can cache-bust /api/logo.
   if (next.logoDataUrl !== cur.logoDataUrl) next.logoVersion = Date.now();
   await writeJSON(K_SETTINGS, next);

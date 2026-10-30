@@ -550,7 +550,7 @@ function lnRooms(v) {
         ${can('linenCheckout') && places.some((pl) => pl.ri === ri && lnPlaceDue(pl) !== 'checkout') ? `<button class="small secondary" style="margin-top:10px" onclick="lnCheckout(${ri})">Whole room checked out</button>` : ''}
       </div>`;
     }).join('') || '<p class="muted">Nothing here.</p>'}</div>
-    <div class="ln-legend"><span><i style="background:#fdf1e1;border:1px solid var(--warn)"></i>Due: guest left, or ${d.bedChangeDays}+ days (towels ${d.towelChangeDays}+)</span><span><i style="background:#fdeaea;border:1px solid var(--danger)"></i>Not made up</span></div>`;
+    <div class="ln-legend"><span><i class="ln-pl-due"></i>Due: guest left, or ${d.bedChangeDays}+ days (towels ${d.towelChangeDays}+)</span><span><i class="ln-pl-bad"></i>Not made up</span></div>`;
 }
 window.lnBooking = async (ri, alt) => {
   const r = LN.doc.rooms[ri];

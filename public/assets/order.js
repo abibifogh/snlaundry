@@ -14,10 +14,7 @@ async function loadBranding() {
 function money(n) { const v = Number(n) || 0; return `${settings.currency?.symbol || ''}${Number.isInteger(v) ? v : v.toFixed(2)}`; }
 
 function applyBrand(s) {
-  if (s.accentColor) {
-    document.documentElement.style.setProperty('--accent', s.accentColor);
-    const meta = document.querySelector('meta[name="theme-color"]'); if (meta) meta.content = s.accentColor;
-  }
+  if (window.applyBrandColors) applyBrandColors(s);
   const name = s.hostelName || 'Laundry Service';
   $('#brandName').textContent = name;
   document.title = `Place a Laundry Order · ${name}`;

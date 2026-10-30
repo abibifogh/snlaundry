@@ -6,6 +6,7 @@
   <title>Laundry Service</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/favicon.svg" />
+  <script src="/assets/brand.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=Sofia+Sans+Condensed:wght@600;700;800&display=swap" />
@@ -29,7 +30,7 @@
   </div>
   <script>
     fetch('/api/public-settings').then(r=>r.json()).then(s=>{
-      if(s.accentColor) document.documentElement.style.setProperty('--accent', s.accentColor);
+      if(window.applyBrandColors) applyBrandColors(s);
       if(s.hostelName){ document.getElementById('brandName').textContent = s.hostelName; document.title = s.hostelName + ' · Laundry'; }
       var m=document.getElementById('brandMono'); if(s.logoDataUrl){ const i=document.createElement('img'); i.src=s.logoDataUrl; i.alt=s.hostelName||''; m.replaceWith(i); } else if(s.hostelName){ var w=s.hostelName.trim().split(/\s+/); m.textContent=((w[0]||'L')[0]+(w[1]?w[1][0]:'')).toLowerCase(); }
     }).catch(()=>{});

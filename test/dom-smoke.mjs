@@ -72,7 +72,7 @@ try {
   await handleRequest({ method: 'PUT', path: '/api/settings', headers: H, body: { currency: { code: 'USD', symbol: '$' }, pricePerLoad: 6, piecesPerLoad: 25 } });
 
   out.push('\n▶ Guest order page (order.js)');
-  let w = await loadPage('order.html', 'order.js');
+  let w = await loadPage('order.html', ['brand.js', 'order.js']);
   ok('branding applied from settings', w.document.querySelector('#brandName').textContent === 'DOM Hostel', w.document.querySelector('#brandName').textContent);
   ok('order form shows payment choice (timing + method)', w.document.querySelectorAll('input[name="timing"]').length === 2 && w.document.querySelectorAll('input[name="method"]').length === 2);
   w.document.querySelector('#items').value = '30';
@@ -86,7 +86,7 @@ try {
   ok('track link populated', /\/track\?id=pub_/.test(w.document.querySelector('#trackLink').href), w.document.querySelector('#trackLink').href);
 
   out.push('\n▶ Reception app (app.js) — setup already done, so shows lock screen');
-  w = await loadPage('app.html', ['guide.js', 'app.js', 'linen.js', 'linen-simple.js']);
+  w = await loadPage('app.html', ['brand.js', 'guide.js', 'app.js', 'linen.js', 'linen-simple.js']);
   ok('lock screen visible (not setup)', !w.document.querySelector('#lockScreen').classList.contains('hidden'));
   ok('PIN pad rendered', w.document.querySelectorAll('#pinpad button').length === 12);
   // keyboard PIN entry works on the lock screen
@@ -151,6 +151,11 @@ try {
   await sleep(80);
   ok('settings shows currency select', !!w.document.querySelector('#stCurrency'));
   ok('QR code drawn', !!w.document.querySelector('#qrbox canvas, #qrbox img'));
+  ok('colours card: accent, second, hover and four stage pickers', w.document.querySelectorAll('.cpick input[type="color"]').length === 7);
+  w.document.querySelector('#stColor').value = '#7a1f5c'; w.previewColors({ target: w.document.querySelector('#stColor') });
+  ok('picking a colour previews it', w.document.documentElement.style.getPropertyValue('--accent') === '#7a1f5c');
+  w.resetColors();
+  ok('restore default colours puts the built-in accent back', w.document.querySelector('#stColor').value === '#0f766e' && w.document.documentElement.style.getPropertyValue('--accent') === '#0f766e');
 
   // cashiers tab: open add-cashier modal and confirm permission checkboxes exist
   [...w.document.querySelectorAll('#tabs button')].find(b => b.dataset.tab === 'cashiers').click();
@@ -228,7 +233,7 @@ try {
 
   out.push('\n▶ Housekeeping sign-in');
   await handleRequest({ method: 'POST', path: '/api/cashiers', headers: H, body: { name: 'Ama', pin: '5555', role: 'housekeeping' } });
-  w = await loadPage('app.html', ['guide.js', 'app.js', 'linen.js', 'linen-simple.js']);
+  w = await loadPage('app.html', ['brand.js', 'guide.js', 'app.js', 'linen.js', 'linen-simple.js']);
   ['5', '5', '5', '5', 'OK'].forEach(k => [...w.document.querySelectorAll('#pinpad button')].find(b => b.textContent === k).click());
   await sleep(150);
   const hkTabs = [...w.document.querySelectorAll('#tabs button')].map(b => b.dataset.tab).join(',');
@@ -287,7 +292,7 @@ try {
   await handleRequest({ method: 'POST', path: '/api/linen/found', headers: H, body: { codes: onBed1.slice(1) } });
   await handleRequest({ method: 'POST', path: '/api/linen/change', headers: H, body: { room: 'Akoma', bed: ld.rooms[0].beds[0].id, off: [clean[0], clean[1], cleanPc[0]] } });
   await handleRequest({ method: 'POST', path: '/api/cashiers', headers: H, body: { name: 'Kojo', pin: '6666', role: 'laundry' } });
-  w = await loadPage('app.html', ['guide.js', 'app.js', 'linen.js', 'linen-simple.js']);
+  w = await loadPage('app.html', ['brand.js', 'guide.js', 'app.js', 'linen.js', 'linen-simple.js']);
   ['6', '6', '6', '6', 'OK'].forEach(k => [...w.document.querySelectorAll('#pinpad button')].find(b => b.textContent === k).click());
   await sleep(150);
   [...w.document.querySelectorAll('#tabs button')].find(b => b.dataset.tab === 'linen').click(); await sleep(120);
@@ -308,7 +313,7 @@ try {
   ok('fold saves clean, wash-again and missing', st(batch.codes[0]) === 'clean' && st(batch.codes[1]) === 'soiled' && batch.codes.slice(2).every(c => st(c) === 'missing'), batch.codes.map(st).join(','));
 
   out.push('\n▶ Supervisor: needs checking');
-  w = await loadPage('app.html', ['guide.js', 'app.js', 'linen.js', 'linen-simple.js']);
+  w = await loadPage('app.html', ['brand.js', 'guide.js', 'app.js', 'linen.js', 'linen-simple.js']);
   ['1', '2', '3', '4', 'OK'].forEach(k => [...w.document.querySelectorAll('#pinpad button')].find(b => b.textContent === k).click());
   await sleep(150);
   [...w.document.querySelectorAll('#tabs button')].find(b => b.dataset.tab === 'linen').click(); await sleep(120);

@@ -17,10 +17,7 @@ const LINES = {
 async function loadBranding() {
   try {
     settings = await (await fetch('/api/public-settings')).json();
-    if (settings.accentColor) {
-      document.documentElement.style.setProperty('--accent', settings.accentColor);
-      const meta = document.querySelector('meta[name="theme-color"]'); if (meta) meta.content = settings.accentColor;
-    }
+    if (window.applyBrandColors) applyBrandColors(settings);
     const name = settings.hostelName || 'Laundry Service';
     $('#brandName').textContent = name;
     document.title = `Track your Laundry · ${name}`;
