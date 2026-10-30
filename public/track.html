@@ -2,48 +2,53 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Track your Laundry</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/favicon.svg" />
+  <meta name="theme-color" content="#0f766e" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=Sofia+Sans+Condensed:wght@600;700;800&display=swap" />
   <link rel="stylesheet" href="/assets/styles.css" />
 </head>
-<body>
+<body class="gpage">
   <div class="wrap">
     <div class="brandbar" id="brand">
+      <div class="mono-sm" id="brandMono" aria-hidden="true">sn</div>
       <div>
         <div class="name" id="brandName">Laundry Service</div>
-        <div class="sub">Order Tracking</div>
+        <div class="sub">Order tracking</div>
       </div>
     </div>
 
     <div id="notFound" class="card hidden center">
       <h2>Order not found</h2>
-      <p class="hint">This tracking link doesn't match an order. Please check the link or ask reception.</p>
+      <p class="hint" style="margin:0">This tracking link doesn’t match an order. Check the link, or ask at reception.</p>
     </div>
 
     <div id="content" class="hidden">
-      <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <h2 style="margin:0">Order #<span id="oNum"></span></h2>
-          <span id="oStatus" class="badge"></span>
-        </div>
-        <div id="progress" style="margin:18px 0"></div>
-        <table class="data" style="margin-top:6px">
-          <tbody id="oDetails"></tbody>
-        </table>
+      <div class="card" style="display:grid;gap:4px">
+        <span class="tag" style="font-size:25px" id="oNum"></span>
+        <h2 id="oTitle" style="margin:6px 0 0;font-size:22px"></h2>
+        <p class="muted" id="oLine" style="margin:0"></p>
+        <div class="calc hidden" id="oReady" style="margin-top:12px"></div>
       </div>
-
+      <div class="card"><div class="vsteps" id="progress"></div></div>
       <div class="card">
-        <h2>Messages</h2>
-        <p class="hint">Questions about your laundry? Message reception here.</p>
+        <h2>Your order</h2>
+        <dl class="kv" id="oDetails" style="margin-top:8px"></dl>
+      </div>
+      <div class="card">
+        <h2>Message reception</h2>
+        <p class="hint" style="margin-bottom:10px">Ask anything about your laundry. Replies appear here and by email.</p>
         <div class="thread" id="thread"></div>
-        <form id="msgForm" style="display:flex;gap:8px;margin-top:12px">
-          <input id="msgInput" placeholder="Type a message…" autocomplete="off" required style="flex:1" />
-          <button type="submit" class="small">Send</button>
+        <form id="msgForm" class="compose">
+          <input id="msgInput" placeholder="Write a message" autocomplete="off" required />
+          <button type="submit" aria-label="Send"><svg class="i sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 3 10.5 13.5M21 3l-6.5 18-4-7.5L3 9.5z"/></svg></button>
         </form>
       </div>
-      <p class="center muted" style="font-size:12px">Status updates automatically. You'll also get emails at each stage.</p>
+      <p class="center muted" style="font-size:12.5px">This page updates by itself.</p>
     </div>
   </div>
   <script src="/assets/track.js"></script>

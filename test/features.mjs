@@ -728,6 +728,77 @@ try {
     await api('PUT', '/api/settings', { headers: H(adminT), body: { logoDataUrl: '', baseUrl: '' } });
   }
 
+  section('Accept: reception can correct the item count');
+  {
+    const g = await api('POST', '/api/orders', { body: { guestName: 'Count Me', guestEmail: 'c@example.com', items: 20 } });
+    r = await api('POST', `/api/orders/${g.body.id}/accept`, { headers: H(adminT), body: { room: 'C1', items: 30 } });
+    ok('the counted items replace the guest’s number', r.status === 200 && r.body.items === 30, JSON.stringify({ s: r.status, i: r.body.items }));
+    ok('loads and price follow the counted items', r.body.loads === 2 && r.body.price === 20, JSON.stringify({ l: r.body.loads, p: r.body.price }));
+    ok('the correction is in the log', (r.body.logs || []).some((l) => /counted 30 items \(guest said 20\)/.test(l.detail)));
+  }
+
+  section('Undo: the person who moved an order can take it back briefly');
+  {
+    const mk = async (name) => {
+      const g = await api('POST', '/api/orders', { body: { guestName: name, guestEmail: 'u@example.com', items: 5 } });
+      await api('POST', `/api/orders/${g.body.id}/accept`, { headers: H(adminT), body: { room: 'U1' } });
+      return g.body.id;
+    };
+    const U = await mk('Undo One');
+    r = await api('POST', `/api/orders/${U}/advance`, { headers: H(adminT), body: {} });
+    ok('starting cleaning stamps when it started', r.body.status === 'cleaning' && !!r.body.cleaningAt && r.body.lastMove?.to === 'cleaning', JSON.stringify(r.body.lastMove));
+    r = await api('POST', `/api/orders/${U}/undo`, { headers: H(yawAuth.body.token) });
+    ok('someone else cannot undo it', r.status === 403, `got ${r.status}`);
+    r = await api('POST', `/api/orders/${U}/undo`, { headers: H(adminT) });
+    ok('the same person can undo it', r.status === 200 && r.body.status === 'accepted', JSON.stringify({ s: r.status, st: r.body.status }));
+    ok('undo clears what the move stamped', !r.body.cleaningBy && !r.body.cleaningAt, JSON.stringify({ by: r.body.cleaningBy, at: r.body.cleaningAt }));
+    ok('undo is logged', (r.body.logs || []).some((l) => l.action === 'undone' && /accepted → cleaning/.test(l.detail)));
+    r = await api('POST', `/api/orders/${U}/undo`, { headers: H(adminT) });
+    ok('there is nothing left to undo', r.status === 409, `got ${r.status}`);
+
+    // A cashier without Move back can still undo their own tap.
+    r = await api('POST', `/api/orders/${U}/advance`, { headers: H(yawAuth.body.token), body: {} });
+    ok('a cashier without Move back advances', r.status === 200 && r.body.status === 'cleaning', `got ${r.status}`);
+    r = await api('POST', `/api/orders/${U}/undo`, { headers: H(yawAuth.body.token) });
+    ok('and can undo their own move without the Move back permission', r.status === 200 && r.body.status === 'accepted', `got ${r.status} ${r.body.error || ''}`);
+
+    // Ready → undo clears readyAt / readyBy.
+    await api('POST', `/api/orders/${U}/advance`, { headers: H(adminT), body: {} });
+    r = await api('POST', `/api/orders/${U}/advance`, { headers: H(adminT), body: {} });
+    ok('marked ready', r.body.status === 'ready' && !!r.body.readyAt);
+    r = await api('POST', `/api/orders/${U}/undo`, { headers: H(adminT) });
+    ok('undoing Mark ready puts it back in Cleaning and clears readyAt', r.body.status === 'cleaning' && !r.body.readyAt && !r.body.readyBy && !!r.body.cleaningAt, JSON.stringify({ st: r.body.status, ra: r.body.readyAt }));
+
+    // After the window it is too late.
+    await api('POST', `/api/orders/${U}/advance`, { headers: H(adminT), body: {} });
+    const all = await featStore.getCollection('orders');
+    all.find((o) => o.id === U).lastMove.at = new Date(Date.now() - 60000).toISOString();
+    await featStore.saveCollection('orders', all);
+    r = await api('POST', `/api/orders/${U}/undo`, { headers: H(adminT) });
+    ok('after the undo window it is refused', r.status === 409 && /Too late/.test(r.body.error), `got ${r.status} ${r.body.error}`);
+
+    // A Move back ends the undo chance.
+    const V = await mk('Undo Two');
+    await api('POST', `/api/orders/${V}/advance`, { headers: H(adminT), body: {} });
+    await api('POST', `/api/orders/${V}/revert`, { headers: H(adminT), body: {} });
+    r = await api('POST', `/api/orders/${V}/undo`, { headers: H(adminT) });
+    ok('after a Move back there is nothing to undo', r.status === 409, `got ${r.status}`);
+
+    // Cancel can be undone too, back to the stage it was in.
+    r = await api('POST', `/api/orders/${V}/cancel`, { headers: H(adminT), body: { reason: 'wrong bag' } });
+    ok('cancelled', r.body.status === 'cancelled');
+    r = await api('POST', `/api/orders/${V}/cancel`, { headers: H(adminT), body: {} });
+    ok('cancelling twice is refused', r.status === 409, `got ${r.status}`);
+    r = await api('POST', `/api/orders/${V}/undo`, { headers: H(adminT) });
+    ok('undoing a cancel restores the stage it was in', r.status === 200 && r.body.status === 'accepted', JSON.stringify({ s: r.status, st: r.body.status }));
+
+    // Guests can see when each stage happened.
+    await api('POST', `/api/orders/${V}/advance`, { headers: H(adminT), body: {} });
+    const pubV = (await api('GET', `/api/orders/${V}`, { headers: H(adminT) })).body.publicId;
+    r = await api('GET', `/api/orders/public/${pubV}`);
+    ok('the guest tracking view carries stage times', !!r.body.cleaningAt && r.body.readyAt === null && !r.body.logs, JSON.stringify({ c: r.body.cleaningAt, r: r.body.readyAt }));
+  }
+
   section('Admin: delete orders in a timeframe');
   const before = (await api('GET', '/api/orders', { headers: H(adminT) })).body.length;
   ok('there are orders to delete', before > 0);

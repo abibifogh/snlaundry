@@ -104,7 +104,32 @@ try {
   ok('orders board rendered with the guest order', /Zoe Q/.test(w.document.querySelector('#view').innerHTML), 'no order in view');
   ok('new order shows Accept button', /Accept/.test(w.document.querySelector('#view').innerHTML));
   ok('sound mute button present in topbar', !!w.document.querySelector('#muteBtn'));
-  ok('shift bar offers Start shift', /Start shift/.test(w.document.querySelector('#view').innerHTML));
+  ok('shift chip in the header offers Start shift', /Start shift/.test(w.document.querySelector('#shiftChip').textContent) && !w.document.querySelector('#shiftChip').classList.contains('hidden'), w.document.querySelector('#shiftChip').textContent);
+  ok('board draws four stage lanes with the order as a card', w.document.querySelectorAll('#lanes .lane').length === 4 && /Zoe Q/.test(w.document.querySelector('#lanes .ocard').textContent));
+  ok('a new order card offers Accept as its one action', [...w.document.querySelectorAll('#lanes .ocard .card-f button')].some(b => b.textContent === 'Accept'));
+  ok('nav carries icons and labels', w.document.querySelectorAll('#tabs button svg').length === 7 && /Orders/.test(w.document.querySelector('#tabs button').textContent));
+  ok('sound and alerts live in the avatar menu', !!w.document.querySelector('#userMenu #muteBtn') && !!w.document.querySelector('#userMenu #notifyBtn'));
+  {
+    const zoe = w._orders.find(o => o.guestName === 'Zoe Q');
+    await w.openAccept(zoe.id); await sleep(30);
+    const sheet = w.document.querySelector('#modalHost .modal.sheet');
+    ok('accept opens as a sheet with a live price', !!sheet && /Accept/.test(sheet.textContent) && !!sheet.querySelector('.calc .amt'));
+    // runScripts:'outside-only' never fires inline onclick="" attributes, so call the handler the button names.
+    ok('the accept button calls doAccept', /doAccept\(\)/.test(w.document.querySelector('#accGo').getAttribute('onclick')));
+    await w.doAccept(); await sleep(60);
+    ok('accepting without a room asks for one', /Pick the guest/.test(w.document.querySelector('#modalHost').textContent));
+    w.closeModal();
+    await handleRequest({ method: 'POST', path: `/api/orders/${zoe.id}/accept`, headers: H, body: { room: 'D1' } });
+    await w.openOrder(zoe.id); await sleep(30);
+    const dr = w.document.querySelector('#modalHost .modal.drawer');
+    ok('order details open as a drawer with the progress line', !!dr && dr.querySelectorAll('.step').length === 5 && /Start cleaning/.test(dr.textContent));
+    await w.advance(zoe.id); await sleep(60);
+    const undoBtn = [...w.document.querySelectorAll('#toasts .toast button')].find(b => b.textContent === 'Undo');
+    ok('moving an order on shows a toast with Undo', !!undoBtn && /in the wash/.test(w.document.querySelector('#toasts').textContent), w.document.querySelector('#toasts').textContent);
+    undoBtn.click(); await sleep(120);
+    const back = (await handleRequest({ method: 'GET', path: `/api/orders/${zoe.id}`, headers: H })).body;
+    ok('Undo puts the order back', back.status === 'accepted' && !back.cleaningBy, back.status);
+  }
   // open the start-shift modal (laundry handover — acknowledge, no cash float)
   w.openStartShift();
   ok('start-shift modal auto-selects shift (no chooser), has acknowledgement, no cash float', !!w.document.querySelector('#shAck') && !w.document.querySelector('#shType') && !w.document.querySelector('#shFloat'));

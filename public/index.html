@@ -2,36 +2,36 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Laundry Service</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=Sofia+Sans+Condensed:wght@600;700;800&display=swap" />
   <link rel="stylesheet" href="/assets/styles.css" />
 </head>
-<body>
+<body class="gpage">
   <div class="wrap">
     <div class="brandbar" id="brand">
+      <div class="mono-sm" id="brandMono" aria-hidden="true">sn</div>
       <div>
         <div class="name" id="brandName">Laundry Service</div>
-        <div class="sub">In-house Laundry</div>
+        <div class="sub">In-house laundry</div>
       </div>
     </div>
-    <div class="card center">
-      <div style="font-size:44px">🧺</div>
-      <h2>Laundry Service</h2>
-      <p class="hint">Guests can place an order; staff manage everything from the reception app.</p>
-      <div class="stack">
-        <a class="btn btn-full" href="/order">Place an order (guest)</a>
-        <a class="btn btn-full secondary" href="/app">Reception / Admin</a>
-      </div>
+    <div class="ghero"><h1>Laundry, washed and folded for you.</h1><p>Guests place an order here; staff manage everything from the reception app.</p></div>
+    <div class="card" style="display:grid;gap:10px;margin-top:14px">
+      <a class="btn big btn-full" href="/order">Place an order</a>
+      <a class="btn big btn-full secondary" href="/app">Staff sign in</a>
     </div>
-    <p class="center muted" style="font-size:12px">Guests normally reach the order page by scanning the QR code at reception.</p>
+    <p class="center muted" style="font-size:12.5px">Guests normally reach the order page by scanning the QR code at reception.</p>
   </div>
   <script>
     fetch('/api/public-settings').then(r=>r.json()).then(s=>{
       if(s.accentColor) document.documentElement.style.setProperty('--accent', s.accentColor);
       if(s.hostelName){ document.getElementById('brandName').textContent = s.hostelName; document.title = s.hostelName + ' · Laundry'; }
-      if(s.logoDataUrl){ const i=document.createElement('img'); i.src=s.logoDataUrl; i.alt=s.hostelName||''; document.getElementById('brand').prepend(i); }
+      var m=document.getElementById('brandMono'); if(s.logoDataUrl){ const i=document.createElement('img'); i.src=s.logoDataUrl; i.alt=s.hostelName||''; m.replaceWith(i); } else if(s.hostelName){ var w=s.hostelName.trim().split(/\s+/); m.textContent=((w[0]||'L')[0]+(w[1]?w[1][0]:'')).toLowerCase(); }
     }).catch(()=>{});
   </script>
 </body>

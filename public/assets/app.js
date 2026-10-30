@@ -17,13 +17,6 @@ const state = {
 
 const STATUS_LABEL = { new: 'New', accepted: 'Accepted', cleaning: 'Cleaning', ready: 'Ready', completed: 'Completed', cancelled: 'Cancelled' };
 const REVERSE_LABEL = { completed: 'Ready', ready: 'Cleaning', cleaning: 'Accepted' };
-function attributionRows(o) {
-  const rows = [
-    ['Accepted by', o.acceptedBy], ['Cleaned by', o.cleaningBy],
-    ['Marked ready by', o.readyBy], ['Picked up by', o.completedBy],
-  ].filter(([, v]) => v && v.name);
-  return rows.map(([k, v]) => `<tr><td class="muted">${k}</td><td>${esc(v.name)}</td></tr>`).join('');
-}
 
 // ---------------- API ----------------
 async function api(method, path, body) {
@@ -72,8 +65,8 @@ function ping() {
 function toggleMute() {
   state.muted = !state.muted;
   localStorage.setItem('laundry_muted', state.muted ? '1' : '0');
-  const b = document.getElementById('muteBtn');
-  if (b) b.textContent = state.muted ? '🔕 Sound off' : '🔔 Sound on';
+  const b = document.querySelector('#muteBtn .sw');
+  if (b) b.classList.toggle('on', !state.muted);
   if (!state.muted) { initAudio(); ping(); }
 }
 // A distinct, lower "start a shift" chime (three equal pulses).
@@ -213,7 +206,113 @@ function money(n) { return n == null ? '—' : `${cur()}${Number(n).toFixed(2)}`
 function fmt(iso) { if (!iso) return '—'; try { return new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch { return iso; } }
 function ago(iso) { if (!iso) return ''; const h = (Date.now() - new Date(iso)) / 3600000; return h < 1 ? `${Math.round(h * 60)}m ago` : `${h.toFixed(1)}h ago`; }
 function toLocalInput(iso) { const d = iso ? new Date(iso) : new Date(); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; }
-function notice(el, kind, text) { el.innerHTML = text ? `<div class="notice ${kind}">${esc(text)}</div>` : ''; }
+function notice(el, kind, text) { if (el) el.innerHTML = text ? `<div class="notice ${kind}">${esc(text)}</div>` : ''; }
+function round2m(n) { return Math.round((Number(n) || 0) * 100) / 100; }
+function moneyShort(n) { const v = Number(n) || 0; return `${cur()}${Number.isInteger(round2m(v)) ? round2m(v) : v.toFixed(2)}`; }
+function hm(iso) { if (!iso) return '—'; return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }); }
+function dayLabel(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso), n = new Date();
+  const days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - new Date(n.getFullYear(), n.getMonth(), n.getDate())) / 864e5);
+  if (days === 0) return 'Today ' + hm(iso); if (days === 1) return 'Tomorrow ' + hm(iso); if (days === -1) return 'Yesterday ' + hm(iso);
+  return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) + ', ' + hm(iso);
+}
+function dur(ms) { const m = Math.max(0, Math.round(ms / 60000)); if (m < 60) return m + ' min'; const h = Math.floor(m / 60), r = m % 60; if (h < 48) return h + 'h' + (r ? ' ' + r + 'm' : ''); return Math.round(h / 24) + ' days'; }
+
+// ---------------- icons ----------------
+const ICON = {
+  orders: '<path d="M8 3.5 3.5 6 2 11l3 1.2V20h14v-7.8l3-1.2-1.5-5L16 3.5"/><path d="M8 3.5a4 4 0 0 0 8 0"/>',
+  linen: '<path d="m3 8 9-4 9 4-9 4z"/><path d="m3 12 9 4 9-4M3 16l9 4 9-4"/>',
+  msg: '<path d="M4 5h16v11H9l-5 4z"/>',
+  reports: '<path d="M4 20V11M10 20V5M16 20v-6M3 20h18"/>',
+  staff: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14a6.5 6.5 0 0 1 3.5 6"/>',
+  settings: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
+  guide: '<path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v17H6.5A2.5 2.5 0 0 0 4 21.5z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/>',
+  bell: '<path d="M6 9a6 6 0 0 1 12 0c0 6.5 2.5 8 2.5 8h-17S6 15.5 6 9"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
+  sound: '<path d="M4 9.5v5h4l5 4v-13l-5 4z"/><path d="M16.5 9a4 4 0 0 1 0 6M19 6.5a7.5 7.5 0 0 1 0 11"/>',
+  more: '<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>',
+  x: '<path d="M6 6l12 12M18 6 6 18"/>',
+  check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+  cash: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6 9.5v.01M18 14.5v.01"/>',
+  card: '<rect x="2.5" y="5" width="19" height="14" rx="2.2"/><path d="M2.5 10h19M6.5 15h3"/>',
+  door: '<path d="M14 3.5H6.5v17H14"/><path d="M14 3.5 19 5v15l-5 1.5z"/><path d="M16.3 12v.01"/>',
+  undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H12"/>',
+  chev: '<path d="m6 9 6 6 6-6"/>',
+  right: '<path d="m9 6 6 6-6 6"/>',
+  alert: '<path d="M12 3.5 2.5 20h19z"/><path d="M12 10v4.5M12 17.3v.01"/>',
+  tag: '<path d="M3 12V4h8l9.5 9.5-8 8z"/><circle cx="7.5" cy="8.5" r="1.4"/>',
+  send: '<path d="M21 3 10.5 13.5M21 3l-6.5 18-4-7.5L3 9.5z"/>',
+  edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
+  pause: '<circle cx="12" cy="12" r="8.5"/><path d="M10 9v6M14 9v6"/>',
+  washer: '<rect x="4" y="2.5" width="16" height="19" rx="2.5"/><circle cx="12" cy="13" r="5"/><path d="M7.5 6h3"/>',
+};
+function ic(n, cls = '') { return `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICON[n] || ''}</svg>`; }
+const TAB_ICON = { orders: 'orders', linen: 'linen', messages: 'msg', reports: 'reports', cashiers: 'staff', settings: 'settings', guide: 'guide' };
+const ROLE_LABEL = { admin: 'Admin', cashier: 'Reception', laundry: 'Laundry attendant', housekeeping: 'Housekeeping' };
+function tabLabel(id) { return { orders: state.user?.role === 'laundry' ? 'Queue' : 'Orders', linen: 'Linen', messages: 'Messages', reports: 'Reports', cashiers: 'Staff', settings: 'Settings', guide: 'Guide' }[id] || id; }
+
+// ---------------- toasts ----------------
+// A short confirmation at the bottom. With `undo`, it carries an Undo button for
+// as long as the server still allows it.
+function toast(text, opts = {}) {
+  const host = document.getElementById('toasts'); if (!host) return;
+  const el = document.createElement('div');
+  el.className = 'toast' + (opts.err ? ' err' : ''); el.setAttribute('role', 'status');
+  const span = document.createElement('span'); span.textContent = text; el.appendChild(span);
+  if (opts.undo) {
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = 'Undo';
+    b.onclick = async () => { b.disabled = true; try { await opts.undo(); } catch (e) { toast(e.message, { err: true }); } el.remove(); };
+    el.appendChild(b);
+  }
+  host.appendChild(el);
+  while (host.children.length > 2) host.firstChild.remove();
+  setTimeout(() => el.remove(), opts.undo ? 10000 : 4500);
+}
+
+// ---------------- light / dark ----------------
+function themePref() { try { return localStorage.getItem('laundry_theme') || 'system'; } catch { return 'system'; } }
+window.applyTheme = (t) => {
+  try { if (t === 'system') localStorage.removeItem('laundry_theme'); else localStorage.setItem('laundry_theme', t); } catch {}
+  if (t === 'system') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+  renderThemeSeg();
+};
+function renderThemeSeg() {
+  const h = document.getElementById('themeSeg'); if (!h) return;
+  const curT = themePref();
+  h.innerHTML = [['system', 'Device'], ['light', 'Light'], ['dark', 'Dark']].map(([k, l]) => `<button type="button" aria-pressed="${curT === k}" onclick="applyTheme('${k}')">${l}</button>`).join('');
+}
+
+// ---------------- menus ----------------
+function closeMenus() {
+  ['userMenu', 'shiftMenu', 'moreMenu'].forEach(id => { const m = document.getElementById(id); if (m) m.classList.add('hidden'); });
+  const b = document.getElementById('menuBackdrop'); if (b) b.classList.add('hidden');
+}
+window.closeMenus = closeMenus;
+function openMenu(id) {
+  const m = document.getElementById(id), open = !m.classList.contains('hidden');
+  closeMenus(); if (open) return;
+  m.classList.remove('hidden'); $('#menuBackdrop').classList.remove('hidden');
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const anyMenu = ['userMenu', 'shiftMenu', 'moreMenu'].some(id => { const m = document.getElementById(id); return m && !m.classList.contains('hidden'); });
+  if (anyMenu) return closeMenus();
+  if ($('#modalHost') && $('#modalHost').innerHTML) closeModal();
+});
+
+// ---------------- brand ----------------
+function applyBrand(s) {
+  if (s.accentColor) {
+    document.documentElement.style.setProperty('--accent', s.accentColor);
+    const meta = document.querySelector('meta[name="theme-color"]'); if (meta) meta.content = s.accentColor;
+  }
+  document.documentElement.style.setProperty('--hover', s.hoverColor || '#FFF8ED');
+}
+function monogram(name) { const w = String(name || 'Laundry').trim().split(/\s+/); return ((w[0] || 'L')[0] + (w[1] ? w[1][0] : '')).toLowerCase(); }
+
 
 // ---------------- PWA + push notifications ----------------
 function registerSW() {
@@ -335,17 +434,31 @@ function showSetup() {
 function hideAll() { ['setupScreen', 'lockScreen', 'app'].forEach(id => $('#' + id).classList.add('hidden')); }
 
 async function showLock() {
-  hideAll(); $('#lockScreen').classList.remove('hidden');
-  state.pin = ''; renderPinDots();
+  hideAll(); $('#lockScreen').classList.remove('hidden'); closeMenus();
+  state.pin = ''; renderPinDots(); notice($('#pinMsg'), '', '');
   try { const s = await (await fetch('/api/public-settings')).json();
-    if (s.accentColor) document.documentElement.style.setProperty('--accent', s.accentColor);
-    if (s.hoverColor) document.documentElement.style.setProperty('--hover', s.hoverColor);
+    if (s.accentColor) applyBrand(s);
+    else if (s.hoverColor) document.documentElement.style.setProperty('--hover', s.hoverColor);
     $('#lockName').textContent = s.hostelName || 'Laundry';
-    if (s.logoDataUrl && !$('#lockBrand img')) { const i = document.createElement('img'); i.src = s.logoDataUrl; $('#lockBrand').prepend(i); }
+    if (s.logoDataUrl && !$('#lockBrand img')) { const i = document.createElement('img'); i.src = s.logoDataUrl; i.alt = ''; $('#lockBrand').prepend(i); }
   } catch {}
   buildPinpad();
+  renderLockInfo();
   renderShiftEndBanner();
 }
+// The time, and the shift still open from before the lock, for whoever walks up.
+function renderLockInfo() {
+  const d = new Date();
+  $('#lockClock').textContent = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  $('#lockDate').textContent = d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+  const s = state.shift, box = $('#lockShift');
+  if (s && s.open && s.shift) {
+    const ip = (s.inProgress || []).length;
+    box.innerHTML = `<b>${esc(s.shift.type)} shift is open</b><span>${esc(s.shift.cashierName)} since ${hm(s.shift.openedAt)} · ${ip} order${ip === 1 ? '' : 's'} in progress</span>`;
+    box.classList.remove('hidden');
+  } else box.classList.add('hidden');
+}
+setInterval(() => { const l = document.getElementById('lockScreen'); if (l && !l.classList.contains('hidden')) renderLockInfo(); }, 20000);
 
 function renderShiftEndBanner() {
   const card = document.querySelector('#lockScreen .card');
@@ -355,7 +468,7 @@ function renderShiftEndBanner() {
   if (!state.shiftEnded) {
     if (banner) banner.remove();
     h2.textContent = 'Enter your PIN';
-    hint.textContent = 'Each cashier has their own PIN. No full login needed.';
+    hint.textContent = 'Your PIN signs you in as yourself.';
     return;
   }
   h2.textContent = `${state.shiftEnded.oldType} shift has ended`;
@@ -376,7 +489,12 @@ function renderPinDots() { $('#pinDots').textContent = state.pin.replace(/./g, '
 function buildPinpad() {
   const pad = $('#pinpad'); pad.innerHTML = '';
   const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '⌫', '0', 'OK'];
-  keys.forEach(k => { const b = document.createElement('button'); b.textContent = k; b.onclick = () => pinKey(k); pad.appendChild(b); });
+  keys.forEach(k => {
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = k; b.onclick = () => pinKey(k);
+    if (k === 'OK') b.className = 'ok';
+    if (k === '⌫') { b.className = 'del'; b.setAttribute('aria-label', 'Delete'); }
+    pad.appendChild(b);
+  });
 }
 async function pinKey(k) {
   notice($('#pinMsg'), '', '');
@@ -390,7 +508,11 @@ async function submitPin() {
   if (state.pin.length < 4) return notice($('#pinMsg'), 'err', 'PIN is at least 4 digits.');
   let auth;
   try { auth = await api('POST', '/auth/pin', { pin: state.pin }); }
-  catch { state.pin = ''; renderPinDots(); return notice($('#pinMsg'), 'err', 'Incorrect PIN. Try again.'); }
+  catch {
+    state.pin = ''; renderPinDots();
+    const dots = $('#pinDots'); dots.classList.remove('shake'); void dots.offsetWidth; dots.classList.add('shake');
+    return notice($('#pinMsg'), 'err', 'That PIN didn’t match anyone. Try again.');
+  }
 
   // Shift-boundary lock: decide continue vs. start-new.
   if (state.shiftEnded) {
@@ -439,14 +561,25 @@ function lock() {
 
 // ---------------- app shell ----------------
 async function enterApp() {
-  hideAll(); $('#app').classList.remove('hidden');
+  hideAll(); $('#app').classList.remove('hidden'); closeMenus();
   initAudio(); // PIN entry is a user gesture, so audio is now allowed
-  $('#topName').textContent = state.settings?.hostelName || 'Laundry';
-  if (state.settings?.accentColor) document.documentElement.style.setProperty('--accent', state.settings.accentColor);
-  document.documentElement.style.setProperty('--hover', state.settings?.hoverColor || '#FFF8ED');
+  const st = state.settings || {};
+  $('#topName').textContent = st.hostelName || 'Laundry';
+  applyBrand(st);
+  const mono = $('#railMono');
+  mono.innerHTML = st.logoDataUrl ? `<img src="${esc(st.logoDataUrl)}" alt="">` : esc(monogram(st.hostelName));
+  mono.title = st.hostelName || '';
   $('#whoName').textContent = state.user.name;
-  $('#whoRole').textContent = state.user.role;
-  $('#lockBtn').onclick = lock;
+  $('#whoRole').textContent = ROLE_LABEL[state.user.role] || state.user.role;
+  $('#avatarBtn').textContent = (state.user.name || '?').trim()[0].toUpperCase();
+  $('#avatarBtn').onclick = () => openMenu('userMenu');
+  $('#menuBackdrop').onclick = closeMenus;
+  $('#lockBtn').innerHTML = `${ic('lock', 'lg')}<span>Lock</span>`; $('#lockBtn').onclick = lock;
+  $('#menuLock').innerHTML = `${ic('lock', 'sm')}Lock or switch user`; $('#menuLock').onclick = () => { closeMenus(); lock(); };
+  $('#moreBtn').innerHTML = `${ic('more', 'lg')}<span>More</span>`; $('#moreBtn').onclick = () => openMenu('moreMenu');
+  $('#shiftChip').onclick = onShiftChip;
+  state.q = ''; state.filter = null; state.laneIdx = 0;
+  renderThemeSeg();
   ensureTopbarControls();
   resetIdle();
   state.knownOrderIds = null;
@@ -507,48 +640,46 @@ function checkShiftBoundary() {
 }
 
 function ensureTopbarControls() {
-  const lockBtn = $('#lockBtn');
-  // "Enable alerts" — available to all staff so they can subscribe to push.
-  if (!document.getElementById('notifyBtn')) {
-    const n = document.createElement('button');
-    n.id = 'notifyBtn'; n.className = 'ghost small';
-    n.textContent = '🔔 Enable alerts';
-    n.onclick = () => window.enableNotifications();
-    lockBtn.parentNode.insertBefore(n, lockBtn);
-  }
+  const host = $('#menuControls'); host.innerHTML = '';
+  // "Alerts on this device" — every role can subscribe this device to push.
+  const n = document.createElement('button');
+  n.type = 'button'; n.id = 'notifyBtn';
+  n.innerHTML = `${ic('bell', 'sm')}<span>${'Notification' in window && Notification.permission === 'granted' ? 'Alerts are on for this device' : 'Turn on alerts for this device'}</span>`;
+  n.onclick = () => { closeMenus(); window.enableNotifications(); };
+  host.appendChild(n);
   updateNotifyBtn();
-  // Mute toggle — only an admin may turn the sound off.
-  const existing = document.getElementById('muteBtn');
-  if (existing) existing.remove();
+  // Sound for new orders — only an admin may turn it off.
   if (state.user.role === 'admin') {
     const mute = document.createElement('button');
-    mute.id = 'muteBtn'; mute.className = 'ghost small';
-    mute.textContent = state.muted ? '🔕 Sound off' : '🔔 Sound on';
+    mute.type = 'button'; mute.id = 'muteBtn';
+    mute.innerHTML = `${ic('sound', 'sm')}<span>Sound for new orders</span><i class="sw ${state.muted ? '' : 'on'}"></i>`;
     mute.onclick = toggleMute;
-    lockBtn.parentNode.insertBefore(mute, lockBtn);
+    host.appendChild(mute);
   }
 }
 
 // ---------------- shift (till session) ----------------
 async function refreshShift() {
   try { state.shift = await api('GET', '/shifts/current'); } catch { state.shift = { open: false }; }
+  renderShiftChip();
 }
-function shiftBarHtml() {
+function renderShiftChip() {
+  const chip = $('#shiftChip'); if (!chip) return;
   const s = state.shift;
-  if (!s) return '';
+  if (!s || isHousekeeping()) { chip.classList.add('hidden'); return; }
+  chip.classList.remove('hidden');
+  chip.innerHTML = s.open
+    ? `<span class="live"></span>${esc(s.shift.type)} shift <small>· ${esc(s.shift.cashierName)} since ${hm(s.shift.openedAt)}</small>`
+    : `<span class="live off"></span>No shift open <small>· Start shift</small>`;
+  chip.setAttribute('aria-label', s.open ? `${s.shift.type} shift open. Shift options` : 'No shift open. Start shift');
+}
+function onShiftChip() {
+  const s = state.shift; if (!s) return;
+  if (!s.open) return openStartShift();
   const ip = (s.inProgress || []).length;
-  if (s.open) {
-    return `<div class="shiftbar">
-      <span>🟢 <b>${s.shift.type} shift</b> open · since ${fmt(s.shift.openedAt)} · <b>${ip}</b> laundry order(s) in progress</span>
-      <span class="spacer"></span>
-      <button class="small secondary" onclick="openCloseShift()">Close shift</button>
-    </div>`;
-  }
-  return `<div class="shiftbar">
-    <span>⚪ No shift open. Start one to record this handover.</span>
-    <span class="spacer"></span>
-    <button class="small secondary" onclick="openStartShift()">Start shift</button>
-  </div>`;
+  $('#shiftMenu').innerHTML = `<div class="who"><b>${esc(s.shift.type)} shift · open</b><small>${esc(s.shift.cashierName)} since ${hm(s.shift.openedAt)} · ${ip} order${ip === 1 ? '' : 's'} in progress</small></div>
+    <div class="sep"></div><button type="button" onclick="closeMenus();openCloseShift()">${ic('clock', 'sm')}Close shift and hand over</button>`;
+  openMenu('shiftMenu');
 }
 function inProgressListHtml(list, withChecks) {
   if (!list.length) return '<p class="muted" style="font-size:13px">No laundry currently in progress.</p>';
@@ -639,16 +770,24 @@ function buildTabs() {
   if (can('manageSettings')) tabs.push({ id: 'settings', label: 'Settings' });
   tabs.push({ id: 'guide', label: 'Guide' }); // the laundry handbook — every role
   const host = $('#tabs'); host.innerHTML = '';
-  tabs.forEach(t => {
+  const many = tabs.length > 5;
+  tabs.forEach((t, i) => {
     const b = document.createElement('button');
-    b.dataset.tab = t.id; b.innerHTML = `${t.label}<span class="tab-badge hidden" id="badge-${t.id}"></span>`;
+    b.type = 'button'; b.dataset.tab = t.id; b.title = tabLabel(t.id);
+    if (many && i >= 4) b.classList.add('overflow');
+    b.innerHTML = `${ic(TAB_ICON[t.id], 'lg')}<span>${tabLabel(t.id)}</span><span class="tab-badge hidden" id="badge-${t.id}"></span>`;
     b.onclick = () => selectTab(t.id);
     host.appendChild(b);
   });
+  $('#rail').classList.toggle('has-more', many);
+  $('#moreMenu').innerHTML = tabs.slice(4).map(t => `<button type="button" onclick="closeMenus();selectTab('${t.id}')">${ic(TAB_ICON[t.id], 'sm')}${tabLabel(t.id)}</button>`).join('');
 }
 function selectTab(id) {
-  state.tab = id;
-  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
+  state.tab = id; closeMenus();
+  document.querySelectorAll('#tabs button').forEach(b => { b.classList.toggle('active', b.dataset.tab === id); if (b.dataset.tab === id) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
+  $('#viewTitle').textContent = tabLabel(id);
+  $('#topTools').innerHTML = '';
+  const sc = $('#scroller'); if (sc) sc.scrollTop = 0;
   renderTab();
 }
 async function renderTab(silent) {
@@ -665,80 +804,181 @@ async function renderTab(silent) {
 }
 
 // ---------------- ORDERS ----------------
+const STAGES = [
+  { id: 'new', label: 'New', long: 'New', color: 'var(--s-new)' },
+  { id: 'accepted', label: 'Accepted', long: 'Accepted', color: 'var(--s-acc)' },
+  { id: 'cleaning', label: 'Cleaning', long: 'Cleaning', color: 'var(--s-cln)' },
+  { id: 'ready', label: 'Ready', long: 'Ready for pickup', color: 'var(--s-rdy)' },
+];
+const STAGE_COLOR = { new: 'var(--s-new)', accepted: 'var(--s-acc)', cleaning: 'var(--s-cln)', ready: 'var(--s-rdy)', completed: 'var(--s-done)', cancelled: 'var(--s-cancel)' };
+const STATUS_LONG = { ...STATUS_LABEL, ready: 'Ready for pickup', completed: 'Picked up' };
+const isLaundry = () => state.user?.role === 'laundry';
+const unreadOf = (o) => (o.messages || []).filter(m => m.sender === 'guest' && !m.readByStaff).length;
+const estOf = (o) => (o.loads || 1) * (state.settings?.pricePerLoad || 0);
+const balanceOf = (o) => Math.max(0, round2m((Number(o.price) || 0) - (Number(o.amountPaid) || 0)));
+const firstName = (n) => String(n || '').trim().split(/\s+/)[0] || 'The guest';
+const byPickup = (a, b) => new Date(a.pickupAt || a.createdAt) - new Date(b.pickupAt || b.createdAt);
+const isToday = (iso) => iso && new Date(iso).toDateString() === new Date().toDateString();
+// When a stage was reached: newer orders carry the timestamp, older ones only have it in the log.
+function stageAt(o, stage) {
+  const f = { accepted: 'acceptedAt', cleaning: 'cleaningAt', ready: 'readyAt', completed: 'completedAt' }[stage];
+  if (f && o[f]) return o[f];
+  const hit = (o.logs || []).filter(l => l.action === 'status' && l.detail === `Status → ${stage}`).pop();
+  return hit ? hit.at : null;
+}
+
+// What needs a human, using the same rules the reminders already follow.
+function attentionOf(o) {
+  if (!['new', 'accepted', 'cleaning', 'ready'].includes(o.status)) return null;
+  const now = Date.now();
+  if (isSnoozedO(o)) return { kind: 'calm', icon: 'pause', text: 'Delay noted' + (o.delayReason ? ': ' + o.delayReason : '') };
+  if (acceptedTooLong(o)) return { kind: 'warn', icon: 'clock', text: `Waiting ${dur(now - new Date(o.acceptedAt))} to start` };
+  if (o.status === 'ready' && o.readyAt && now - new Date(o.readyAt) > (state.settings?.readyStuckHours || 12) * 3600000) {
+    return { kind: 'bad', icon: 'alert', text: `Not collected · ready ${dur(now - new Date(o.readyAt))}` };
+  }
+  if (pickupApproaching(o)) return { kind: 'warn', icon: 'clock', text: `Pickup in ${dur(new Date(o.pickupAt) - now)}${isLaundry() ? ' · check the lines' : ''}` };
+  if (pickupPast(o) && o.status !== 'ready') return { kind: 'bad', icon: 'alert', text: `Pickup was due ${dur(now - new Date(o.pickupAt))} ago` };
+  return null;
+}
+const needsAttention = (o) => { const a = attentionOf(o); return !!a && a.kind !== 'calm'; };
+
+// The one next step for this order, for this person.
+function nextAction(o) {
+  if (o.status === 'new') return can('acceptOrders') ? { label: 'Accept', fn: `openAccept('${o.id}')` } : null;
+  if (o.status === 'accepted') return can('advanceStatus') ? { label: 'Start cleaning', fn: `advance('${o.id}')` } : null;
+  if (o.status === 'cleaning') return can('advanceStatus') ? { label: 'Mark ready', fn: `advance('${o.id}')` } : null;
+  if (o.status === 'ready') {
+    if (isLaundry()) return null;
+    if (o.paymentStatus === 'paid') return can('advanceStatus') ? { label: 'Mark picked up', fn: `advance('${o.id}')` } : null;
+    return can('takePayment') ? { label: 'Take payment', fn: `takePayment('${o.id}')`, soft: true } : null;
+  }
+  return null;
+}
+function payChip(o) {
+  if (o.status === 'new') return `<span class="pay est">${o.paymentTiming === 'now' ? 'Pays now · ' : ''}est. ${moneyShort(estOf(o))}</span>`;
+  if (o.paymentStatus === 'paid') return `<span class="pay paid">${ic('check', 'sm')}Paid${o.paymentMethod ? ' · ' + esc(o.paymentMethod) : ''}</span>`;
+  if (o.paymentStatus === 'partial') return `<span class="pay part">${moneyShort(balanceOf(o))} due</span>`;
+  return `<span class="pay unpaid">Unpaid ${moneyShort(balanceOf(o))}</span>`;
+}
+
 async function renderOrders(view, silent) {
   const orders = await api('GET', '/orders');
   // Detect genuinely new orders → play the reception ping.
   const newIds = orders.filter(o => o.status === 'new').map(o => o.id);
   state.pendingNew = newIds.length; // drives the repeating ping until all are accepted
+  state.freshIds = [];
   if (state.knownOrderIds !== null) {
     const fresh = newIds.filter(id => !state.knownOrderIds.includes(id));
-    if (fresh.length) { ping(); notifyBg('New laundry order', `${fresh.length} new order(s) awaiting acceptance`, 'new-order'); }
+    if (fresh.length) {
+      ping(); notifyBg('New laundry order', `${fresh.length} new order(s) awaiting acceptance`, 'new-order');
+      state.freshIds = fresh;
+      if (!isLaundry()) toast(fresh.length === 1 ? `New order ${orders.find(o => o.id === fresh[0]).number} from ${firstName(orders.find(o => o.id === fresh[0]).guestName)}` : `${fresh.length} new orders`);
+    }
   }
   state.knownOrderIds = newIds;
   state.pendingFollowUp = inQuietHoursNow() ? 0 : orders.filter(needsFollowUp).length;
   if (can('messageGuests')) {
-    state.pendingMsg = orders.reduce((n, o) => n + (o.messages || []).filter(m => m.sender === 'guest' && !m.readByStaff).length, 0);
+    state.pendingMsg = orders.reduce((n, o) => n + unreadOf(o), 0);
+    setBadge('messages', state.pendingMsg);
   }
-
-  // Laundry staff finish at "mark ready"; hide the Ready-for-pickup column from them.
-  const cols = state.user?.role === 'laundry' ? ['new', 'accepted', 'cleaning'] : ['new', 'accepted', 'cleaning', 'ready'];
-  const colTitle = { new: 'New — awaiting acceptance', accepted: 'Accepted', cleaning: 'Cleaning', ready: 'Ready for pickup' };
-  const newCount = orders.filter(o => o.status === 'new').length;
-
-  const boards = cols.map(st => {
-    const items = orders.filter(o => o.status === st);
-    return `<div class="col"><h3>${colTitle[st]} (${items.length})</h3>${items.map(orderCard).join('') || '<p class="muted" style="margin:6px 4px;font-size:13px">None</p>'}</div>`;
-  }).join('');
-
+  setBadge('orders', isLaundry() ? 0 : newIds.length);
+  state.orders = orders; window._orders = orders;
+  if (state.tab !== 'orders') return; // finished loading after the user moved on
+  if (isLaundry()) { view.innerHTML = attendantHtml(orders); return; }
+  renderOrderSearch();
+  drawBoard(view);
+}
+function drawBoard(view = $('#view')) {
+  view.innerHTML = boardHtml(state.orders || []);
+  const l = $('#lanes'); if (l && l.children[state.laneIdx || 0]) l.scrollLeft = l.children[state.laneIdx].offsetLeft - l.children[0].offsetLeft;
+}
+function renderOrderSearch() {
+  const host = $('#topTools');
+  if (!host || host.querySelector('#orderSearch')) return;
+  host.innerHTML = `<label class="search">${ic('search', 'sm')}<input id="orderSearch" type="search" placeholder="Guest, room or number" autocomplete="off" aria-label="Search orders" value="${esc(state.q || '')}"></label>`;
+  $('#orderSearch').addEventListener('input', (e) => { state.q = e.target.value; drawBoard(); });
+}
+function matchesFilter(o) {
+  if (state.q) { const q = state.q.toLowerCase(); if (!`${o.number} ${o.guestName} ${o.room || ''}`.toLowerCase().includes(q)) return false; }
+  if (state.filter === 'attn') return needsAttention(o);
+  if (state.filter === 'unpaid') return o.status !== 'new' && o.paymentStatus !== 'paid';
+  if (state.filter === 'due') return isToday(o.pickupAt);
+  return true;
+}
+function boardHtml(orders) {
+  const live = orders.filter(o => STAGE_COLOR[o.status] && !['completed', 'cancelled'].includes(o.status));
+  const nAttn = live.filter(needsAttention).length;
+  const unpaid = live.filter(o => o.status !== 'new' && o.paymentStatus !== 'paid');
+  const owed = unpaid.reduce((a, o) => a + balanceOf(o), 0);
+  const nDue = live.filter(o => isToday(o.pickupAt)).length;
+  const f = (id, label, n, dot) => `<button type="button" class="fchip" aria-pressed="${state.filter === id}" onclick="setOrderFilter('${id}')">${dot ? `<span class="d" style="background:${dot}"></span>` : ''}${label} <b class="num">${n}</b></button>`;
   const recent = orders.filter(o => ['completed', 'cancelled'].includes(o.status)).slice(0, 12);
-  view.innerHTML = `
-    ${shiftBarHtml()}
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-      <h2 style="margin:0">Orders ${newCount ? `<span class="pill">${newCount} new</span>` : ''}${state.pendingFollowUp ? ` <span class="pill" style="background:#fbe4e0;color:#992d20">${state.pendingFollowUp} need follow-up</span>` : ''}</h2>
-      <button class="small secondary" onclick="location.reload()">↻ Refresh</button>
+  return `<div class="glance">
+      ${f('attn', 'Needs attention', nAttn, 'var(--warn)')}${f('unpaid', 'Unpaid', unpaid.length, 'var(--bad)')}${f('due', 'Pickup today', nDue)}
+      <span class="sep"></span>${owed ? `<span class="hint num">${moneyShort(owed)} still to collect</span>` : ''}
     </div>
-    <div class="cols">${boards}</div>
-    <h3 style="margin-top:26px;color:var(--muted)">Recently completed / cancelled</h3>
-    <div class="table-wrap"><table class="data"><thead><tr><th>#</th><th>Guest</th><th>Room</th><th>Items</th><th>Total</th><th>Status</th><th>When</th></tr></thead>
-    <tbody>${recent.map(o => `<tr onclick="openOrder('${o.id}')"><td>#${o.number}</td><td>${esc(o.guestName)}</td><td>${esc(o.room || '—')}</td><td>${o.items}</td><td>${money(o.price)}</td><td><span class="badge b-${o.status}">${STATUS_LABEL[o.status]}</span></td><td class="muted">${fmt(o.completedAt || o.updatedAt)}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">None yet</td></tr>'}</tbody></table></div>`;
-  window._orders = orders;
+    <div class="lanesw" role="tablist" aria-label="Stages">${STAGES.map((s, i) => `<button type="button" role="tab" aria-pressed="${(state.laneIdx || 0) === i}" onclick="scrollLane(${i})"><b>${live.filter(o => o.status === s.id && matchesFilter(o)).length}</b>${s.label}</button>`).join('')}</div>
+    <div class="lanes" id="lanes">${STAGES.map(s => laneHtml(s, live.filter(o => o.status === s.id))).join('')}</div>
+    <details class="collected"><summary>Picked up &amp; cancelled <span class="c">latest ${recent.length}</span>${ic('chev', 'sm')}</summary>
+      <div class="table-wrap"><table class="data"><thead><tr><th>#</th><th>Guest</th><th>Room</th><th>Items</th><th class="r">Total</th><th>Status</th><th>When</th></tr></thead>
+      <tbody>${recent.map(o => `<tr onclick="openOrder('${o.id}')"><td class="num">${o.number}</td><td>${esc(o.guestName)}</td><td>${esc(o.room || '—')}</td><td>${o.items}</td><td class="r">${money(o.price)}</td><td><span class="badge b-${o.status}">${STATUS_LONG[o.status]}</span></td><td class="muted">${fmt(o.completedAt || o.updatedAt)}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">None yet</td></tr>'}</tbody></table></div>
+    </details>`;
+}
+function laneHtml(s, list) {
+  list = list.slice().sort((a, b) => (needsAttention(b) ? 1 : 0) - (needsAttention(a) ? 1 : 0) || byPickup(a, b));
+  return `<section class="lane" aria-label="${s.long}">
+    <div class="lane-h"><span class="d" style="background:${s.color}"></span>${s.long}<span class="c num">${list.length}</span></div>
+    <div class="lane-body">${list.length ? list.map(o => orderCard(o, !matchesFilter(o))).join('') : `<div class="empty">Nothing ${s.id === 'new' ? 'waiting' : 'here'}</div>`}</div>
+  </section>`;
+}
+function orderCard(o, dim) {
+  const a = attentionOf(o), act = nextAction(o), unread = unreadOf(o), loads = o.loads || 1;
+  const cls = [dim ? 'dim' : '', state.movedId === o.id ? 'moved' : '', (state.freshIds || []).includes(o.id) ? 'fresh' : ''].join(' ');
+  return `<article class="ocard ${cls}" onclick="openOrder('${o.id}')" onkeydown="if(event.key==='Enter'&&event.target===this)openOrder('${o.id}')" tabindex="0" aria-label="Order ${o.number}, ${esc(o.guestName)}">
+    <div class="top"><span class="tag">${o.number}</span><span class="room ${o.room ? '' : 'none'}">${o.room ? ic('door', 'sm') + esc(o.room) : 'No room yet'}</span></div>
+    <div class="guest">${esc(o.guestName)}${unread ? `<span class="unread" title="Unread messages">${ic('msg', 'sm')}${unread}</span>` : ''}</div>
+    <div class="meta"><span class="num">${o.items} items · ${loads} load${loads > 1 ? 's' : ''}</span>${o.status === 'new' ? `<span>Placed ${hm(o.createdAt)}</span>` : o.pickupAt ? `<span>${ic('clock', 'sm')}${dayLabel(o.pickupAt)}</span>` : ''}${o.discount ? `<span class="pill">${esc(o.discount.code)}</span>` : ''}</div>
+    ${o.note && o.status === 'new' ? `<div class="note">“${esc(o.note)}”</div>` : ''}
+    ${a ? `<div class="attn ${a.kind === 'bad' ? 'bad' : a.kind === 'calm' ? 'calm' : ''}">${ic(a.icon, 'sm')}<span>${esc(a.text)}</span></div>` : ''}
+    <div class="card-f" onclick="event.stopPropagation()">${payChip(o)}${act ? `<button type="button" class="small ${act.soft ? 'soft' : ''}" onclick="${act.fn}">${act.label}</button>` : ''}</div>
+  </article>`;
+}
+window.setOrderFilter = (id) => { state.filter = state.filter === id ? null : id; drawBoard(); };
+window.scrollLane = (i) => {
+  state.laneIdx = i;
+  const l = $('#lanes'); if (l && l.children[i]) l.scrollTo({ left: l.children[i].offsetLeft - l.children[0].offsetLeft, behavior: 'smooth' });
+  document.querySelectorAll('.lanesw button').forEach((b, j) => b.setAttribute('aria-pressed', j === i));
+};
+// Swiping the lanes on a phone keeps the stage switcher in step.
+document.addEventListener('scroll', (e) => {
+  const l = e.target; if (!(l instanceof Element) || l.id !== 'lanes') return;
+  const i = Math.round(l.scrollLeft / Math.max(1, l.clientWidth));
+  if (i !== state.laneIdx) { state.laneIdx = i; document.querySelectorAll('.lanesw button').forEach((b, j) => b.setAttribute('aria-pressed', j === i)); }
+}, true);
+
+// ---- the laundry attendant's queue: only what they can act on ----
+function attendantHtml(orders) {
+  const acc = orders.filter(o => o.status === 'accepted').sort(byPickup);
+  const cln = orders.filter(o => o.status === 'cleaning').sort(byPickup);
+  const nNew = orders.filter(o => o.status === 'new').length;
+  const big = (o, i, btn) => {
+    const a = attentionOf(o), loads = o.loads || 1;
+    const started = o.status === 'cleaning' ? stageAt(o, 'cleaning') : null;
+    return `<article class="bigcard ${i === 0 && o.status === 'accepted' ? 'next' : ''} ${state.movedId === o.id ? 'moved' : ''}" onclick="openOrder('${o.id}')">
+      ${i === 0 && o.status === 'accepted' ? '<span class="eyebrow">Next up</span>' : ''}
+      <div class="card-h"><span class="tag">${o.number}</span><span class="room ${o.room ? '' : 'none'}">${o.room ? ic('door', 'sm') + esc(o.room) : 'No room'}</span></div>
+      <div class="guest">${esc(o.guestName)}</div>
+      <div class="meta"><span class="num">${o.items} items · ${loads} load${loads > 1 ? 's' : ''}</span>${o.pickupAt ? `<span>${ic('clock', 'sm')}Ready by ${dayLabel(o.pickupAt)}</span>` : ''}</div>
+      ${started ? `<div class="meta"><span>${ic('washer', 'sm')}Started ${hm(started)}${o.cleaningBy ? ' by ' + esc(o.cleaningBy.name) : ''} · ${dur(Date.now() - new Date(started))} ago</span></div>` : ''}
+      ${a ? `<div class="attn ${a.kind === 'bad' ? 'bad' : a.kind === 'calm' ? 'calm' : ''}">${ic(a.icon, 'sm')}<span>${esc(a.text)}</span></div>` : ''}
+      ${can('advanceStatus') ? `<button type="button" class="big btn-full" onclick="event.stopPropagation();advance('${o.id}')">${btn}</button>` : ''}
+    </article>`;
+  };
+  return `${nNew ? `<div class="upcoming">${ic('bell', 'sm')}<span><b>${nNew} new</b> waiting at reception. They appear here once accepted.</span></div>` : ''}
+    <section class="att-sec"><h2>Start next <span>${acc.length}</span></h2>${acc.length ? acc.map((o, i) => big(o, i, 'Start cleaning')).join('') : '<div class="empty">Nothing waiting to start</div>'}</section>
+    <section class="att-sec"><h2>In the wash <span>${cln.length}</span></h2>${cln.length ? cln.map((o, i) => big(o, i, 'Mark ready')).join('') : '<div class="empty">Nothing in the machines</div>'}</section>`;
 }
 
-function orderCard(o) {
-  const snoozed = isSnoozedO(o);
-  const flagAccepted = !snoozed && acceptedTooLong(o);
-  const flagSoon = !snoozed && pickupApproaching(o);
-  const flagPast = pickupPast(o);
-  const nextBtn = { accepted: 'Start cleaning', cleaning: 'Mark ready', ready: 'Mark picked up' }[o.status];
-  const laundryBlocked = o.status === 'ready' && state.user?.role === 'laundry'; // laundry can't complete
-  const unread = (o.messages || []).filter(m => m.sender === 'guest' && !m.readByStaff).length;
-  const unpaid = o.paymentStatus !== 'paid';
-  const blockPickup = o.status === 'ready' && unpaid; // can't complete until paid
-  return `<div class="ocard" onclick="openOrder('${o.id}')">
-    <div class="top"><span class="num">#${o.number}</span><span class="badge b-${o.status}">${STATUS_LABEL[o.status]}</span></div>
-    <div>${esc(o.guestName)} ${o.room ? `· Room ${esc(o.room)}` : ''} ${unread ? `<span class="tab-badge">${unread}✉</span>` : ''}</div>
-    <div class="meta">${o.items} items · ${o.loads} load(s) · ${money(o.price)}${o.discount ? ` <span class="pill">${esc(o.discount.code)}</span>` : ''} · ${o.status === 'new' ? paymentPref(o) : paymentLabel(o)}</div>
-    <div class="meta">${o.status === 'new' ? 'Placed ' + ago(o.createdAt) : 'Ready by ' + fmt(o.pickupAt)}</div>
-    ${snoozed ? '<div class="meta" style="color:var(--muted)">🔕 snoozed · ' + esc(o.delayReason || 'delay noted') + '</div>' : ''}
-    ${flagAccepted ? '<div class="meta" style="color:var(--danger);font-weight:600">⏰ waiting ' + ago(o.acceptedAt) + ' — follow up at laundry</div>' : ''}
-    ${flagSoon ? '<div class="meta" style="color:var(--warn);font-weight:600">⏰ pickup soon — ' + (state.user?.role === 'laundry' ? 'check the lines' : 'prepare for pickup') + '</div>' : ''}
-    ${flagPast && !flagSoon ? '<div class="meta" style="color:var(--muted)">pickup time passed</div>' : ''}
-    <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap" onclick="event.stopPropagation()">
-      ${o.status === 'new' && can('acceptOrders') ? `<button class="small" onclick="openAccept('${o.id}')">Accept</button>` : ''}
-      ${o.status !== 'new' && unpaid && can('takePayment') ? `<button class="small secondary" onclick="takePayment('${o.id}')">Take payment</button>` : ''}
-      ${nextBtn && can('advanceStatus') && !laundryBlocked ? `<button class="small" ${blockPickup ? 'disabled title="Collect payment first"' : ''} onclick="advance('${o.id}')">${nextBtn}</button>` : ''}
-    </div>
-  </div>`;
-}
-function paymentPref(o) {
-  if (o.paymentTiming === 'now') return `pay now (${o.paymentMethod || 'cash'})`;
-  return 'pay at pickup';
-}
-function paymentLabel(o) {
-  if (o.paymentStatus === 'paid') return 'paid';
-  if (o.paymentStatus === 'partial') return `partial (${money(o.amountPaid)}/${money(o.price)})`;
-  return '⚠ unpaid';
-}
 // Room input: a dropdown of admin-defined rooms, or a free-text box if none are set.
 function roomField(id, current) {
   const rooms = state.settings?.rooms || [];
@@ -747,100 +987,174 @@ function roomField(id, current) {
   if (current && !list.includes(current)) list.push(current);
   return `<select id="${id}"><option value="">— select room —</option>${list.map(r => `<option value="${esc(r)}" ${current === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}</select>`;
 }
+function paymentPref(o) {
+  if (o.paymentTiming === 'now') return `pay now (${o.paymentMethod || 'cash'})`;
+  return 'pay at pickup';
+}
 
+// ---- order details: a drawer, so the board stays in view ----
 window.openOrder = async (id) => {
   const o = await api('GET', `/orders/${id}`);
   // Viewing the order counts as reading any guest messages — stops the message ping.
-  if ((o.messages || []).some(m => m.sender === 'guest' && !m.readByStaff)) {
+  if (unreadOf(o)) {
     try { await api('POST', `/orders/${id}/read`); } catch {}
-    state.pendingMsg = Math.max(0, (state.pendingMsg || 0) - (o.messages || []).filter(m => m.sender === 'guest' && !m.readByStaff).length);
+    state.pendingMsg = Math.max(0, (state.pendingMsg || 0) - unreadOf(o));
+    setBadge('messages', state.pendingMsg);
   }
+  state.drawer = { id, o, more: false };
+  drawDrawer();
+};
+function drawDrawer() {
+  const { o } = state.drawer;
   const canModify = o.status === 'new' ? can('acceptOrders') : can('modifyAccepted');
-  const logs = (o.logs || []).slice().reverse().map(l => `<div class="log"><b>${esc(l.actor)}</b> <span class="muted">(${esc(l.role)})</span> — ${esc(l.detail)}<br><span class="muted" style="font-size:11px">${fmt(l.at)}</span></div>`).join('');
-  const msgs = (o.messages || []).map(m => `<div class="msg ${m.sender}"><div class="who">${m.sender === 'staff' ? esc(m.staffName || 'Reception') : esc(o.guestName)} · ${fmt(m.at)}</div>${esc(m.text)}</div>`).join('') || '<p class="muted">No messages.</p>';
-  const nextBtn = { accepted: 'Start cleaning', cleaning: 'Mark ready', ready: 'Mark picked up' }[o.status];
-  openModal(`
-    <button class="ghost small close" onclick="closeModal()">✕ Close</button>
-    <h3>Order #${o.number} <span class="badge b-${o.status}">${STATUS_LABEL[o.status]}</span></h3>
-    <table class="data">
-      <tr><td class="muted">Guest</td><td>${esc(o.guestName)}</td></tr>
-      <tr><td class="muted">Email</td><td>${esc(o.guestEmail)}</td></tr>
-      <tr><td class="muted">Room name</td><td>${esc(o.room || '—')}</td></tr>
-      <tr><td class="muted">Items / loads</td><td>${o.items} / ${o.loads}</td></tr>
-      <tr><td class="muted">Total</td><td>${money(o.price)}${o.discount ? ` <span class="muted">(${esc(o.discount.code)} −${money(o.discount.amount)} off ${money(o.listPrice)})</span>` : ''}</td></tr>
-      <tr><td class="muted">Payment</td><td>${o.paymentStatus === 'paid' ? 'Paid ✓ (' + (o.paymentMethod || '') + ')' + (o.paidBy ? ' · by ' + esc(o.paidBy.name) : '') : o.paymentStatus === 'partial' ? `Partial · ${money(o.amountPaid)} of ${money(o.price)} · ${money(o.price - o.amountPaid)} due` : '⚠ Unpaid · guest chose ' + paymentPref(o)}</td></tr>
-      <tr><td class="muted">Ready by</td><td>${fmt(o.pickupAt)}</td></tr>
-      ${o.note ? `<tr><td class="muted">Note</td><td>${esc(o.note)}</td></tr>` : ''}
-      ${o.delayReason ? `<tr><td class="muted">Delay reason</td><td>${esc(o.delayReason)}${isSnoozedO(o) ? ' <span class="pill">reminder muted</span>' : ''}</td></tr>` : ''}
-      ${attributionRows(o)}
-    </table>
-    <div id="modalMsg"></div>
-    <div class="stack" style="margin-top:12px">
-      ${o.status === 'new' && can('acceptOrders') ? `<button onclick="openAccept('${o.id}')">Accept order…</button>` : ''}
-      ${o.status !== 'new' && o.paymentStatus !== 'paid' && can('takePayment') ? `<button onclick="takePayment('${o.id}')">Take payment${o.paymentStatus === 'partial' ? ` (${money(o.price - o.amountPaid)} due)` : ''}</button>` : ''}
-      ${nextBtn && can('advanceStatus') && !(o.status === 'ready' && state.user?.role === 'laundry') ? (o.status === 'ready' && o.paymentStatus !== 'paid'
-          ? `<button disabled title="Collect payment first">${nextBtn} — collect payment first</button>`
-          : `<button onclick="advance('${o.id}', true)">${nextBtn}</button>`) : ''}
-      ${['accepted', 'cleaning', 'ready'].includes(o.status) && can('advanceStatus') ? `<button class="secondary" onclick="reportDelay('${o.id}')">🔕 Report a delay (mute reminder 30 min)</button>` : ''}
-      ${REVERSE_LABEL[o.status] && can('reverseStatus') ? `<button class="secondary" onclick="revert('${o.id}', true)">↩ Move back to ${REVERSE_LABEL[o.status]}</button>` : ''}
-      ${o.status !== 'new' && canModify ? `<button class="secondary" onclick="openModify('${o.id}')">Edit order</button>` : ''}
-      ${o.status !== 'new' && o.status !== 'completed' && o.status !== 'cancelled' && !canModify ? `<p class="muted" style="font-size:13px">Only an admin can edit an accepted order.</p>` : ''}
-      ${!['completed', 'cancelled'].includes(o.status) && can('cancelOrders') ? `<button class="danger" onclick="cancelOrder('${o.id}')">Cancel order</button>` : ''}
+  const total = o.price ?? estOf(o), paid = Number(o.amountPaid) || 0, act = nextAction(o), a = attentionOf(o), loads = o.loads || 1;
+  const steps = [['New', o.createdAt, null], ['Accepted', stageAt(o, 'accepted'), o.acceptedBy], ['Cleaning', stageAt(o, 'cleaning'), o.cleaningBy], ['Ready', stageAt(o, 'ready'), o.readyBy], ['Picked up', stageAt(o, 'completed'), o.completedBy]];
+  const order = ['new', 'accepted', 'cleaning', 'ready', 'completed'];
+  const idx = o.status === 'cancelled' ? steps.reduce((m, s, i) => (s[1] ? i : m), 0) : order.indexOf(o.status);
+  const stepCls = (i) => o.status === 'cancelled' ? (i <= idx ? 'done' : '') : (i < idx || (i === idx && i === 4) ? 'done' : i === idx ? 'now' : '');
+  const more = [
+    o.status !== 'new' && !['completed', 'cancelled'].includes(o.status) && canModify ? `<button type="button" onclick="openModify('${o.id}')">${ic('edit', 'sm')}Edit order</button>` : '',
+    ['accepted', 'cleaning', 'ready'].includes(o.status) && can('advanceStatus') ? `<button type="button" onclick="reportDelay('${o.id}')">${ic('pause', 'sm')}Report a delay</button>` : '',
+    REVERSE_LABEL[o.status] && can('reverseStatus') ? `<button type="button" onclick="revert('${o.id}')">${ic('undo', 'sm')}Move back to ${REVERSE_LABEL[o.status]}</button>` : '',
+    !['completed', 'cancelled'].includes(o.status) && can('cancelOrders') ? `<div class="sep"></div><button type="button" class="red" onclick="askCancel('${o.id}')">${ic('x', 'sm')}Cancel order…</button>` : '',
+  ].filter(Boolean).join('');
+  const msgs = (o.messages || []).map(m => `<div class="msg ${m.sender}"><div class="who">${m.sender === 'staff' ? esc(m.staffName || 'Reception') : esc(firstName(o.guestName))} · ${fmt(m.at)}</div>${esc(m.text)}</div>`).join('');
+  const logs = (o.logs || []).slice().reverse().map(l => `<div class="log"><b>${esc(l.actor)}</b> <span class="muted">(${esc(l.role)})</span> · ${esc(l.detail)}<br><span class="muted" style="font-size:11px">${fmt(l.at)}</span></div>`).join('');
+  const primary = act ? `<button type="button" onclick="${act.fn}">${act.fn.startsWith('takePayment') ? `Take ${moneyShort(balanceOf(o))}` : act.fn.startsWith('openAccept') ? 'Accept order' : act.label}</button>` : '';
+  openDrawer(`
+    <div class="ov-h"><h3><span class="tag" style="font-size:25px">${o.number}</span><span class="stagepill"><span class="d" style="background:${STAGE_COLOR[o.status]}"></span>${STATUS_LONG[o.status]}</span></h3><button type="button" class="close" onclick="closeModal()" aria-label="Close"></button></div>
+    <div class="ov-b">
+      <div class="steps">${steps.map(([l, t, by], i) => `<div class="step ${stepCls(i)}"><span class="o">${stepCls(i) === 'done' ? ic('check', 'sm') : ''}</span><b>${l}</b><small>${t ? hm(t) : '—'}${by && by.name ? '<br>' + esc(by.name) : ''}</small></div>`).join('')}</div>
+      ${o.status === 'cancelled' ? `<div class="attn bad">${ic('x', 'sm')}<span>Cancelled</span></div>` : a ? `<div class="attn ${a.kind === 'bad' ? 'bad' : a.kind === 'calm' ? 'calm' : ''}">${ic(a.icon, 'sm')}<span>${esc(a.text)}</span></div>` : ''}
+      <div id="modalMsg"></div>
+      <div><p class="lbl">Guest</p><dl class="kv">
+        <dt>Name</dt><dd>${esc(o.guestName)}</dd>
+        ${o.guestEmail ? `<dt>Email</dt><dd>${esc(o.guestEmail)}</dd>` : ''}
+        <dt>Room</dt><dd>${o.room ? esc(o.room) : '<span class="muted">Set when accepted</span>'}</dd>
+        <dt>Laundry</dt><dd class="num">${o.items} items · ${loads} load${loads > 1 ? 's' : ''}</dd>
+        <dt>Ready by</dt><dd>${o.pickupAt ? dayLabel(o.pickupAt) : '—'}</dd>
+        ${o.status === 'new' ? `<dt>Paying</dt><dd>${esc(paymentPref(o))}</dd>` : ''}
+      </dl>
+      ${o.note ? `<div class="note" style="margin-top:10px">“${esc(o.note)}”</div>` : ''}</div>
+      <div><p class="lbl">Money</p>
+        <div class="money"><div><small>${o.status === 'new' ? 'Estimate' : 'Total'}</small><b>${moneyShort(total)}</b></div><div><small>Paid</small><b>${moneyShort(paid)}</b></div>
+          <div class="${o.status !== 'new' && balanceOf(o) > 0 ? 'owe' : ''}"><small>Balance</small><b>${moneyShort(o.status === 'new' ? total : balanceOf(o))}</b></div></div>
+        ${o.discount ? `<div class="meta" style="margin-top:8px"><span>${ic('tag', 'sm')}${esc(o.discount.code)} · ${money(o.discount.amount)} off ${money(o.listPrice)}</span></div>` : ''}
+        <div class="ledger">${(o.payments || []).map(p => `<div class="meta"><span>${ic(p.method === 'card' ? 'card' : 'cash', 'sm')}${money(p.amount)} ${esc(p.method)}${p.by && p.by.name ? ' · ' + esc(p.by.name) : ''} · ${fmt(p.at)}</span></div>`).join('')}</div>
+      </div>
+      <div><p class="lbl">Messages with ${esc(firstName(o.guestName))}</p>
+        <div class="thread">${msgs || '<span class="muted">No messages yet.</span>'}</div>
+        ${can('messageGuests') ? `<form class="compose" onsubmit="return replyOrder(event,'${o.id}')"><input id="replyInput" placeholder="Reply to ${esc(firstName(o.guestName))}" autocomplete="off" required><button aria-label="Send">${ic('send', 'sm')}</button></form>` : ''}
+      </div>
+      <div id="cancelBox"></div>
+      <details class="actlog"><summary>Activity (${(o.logs || []).length})</summary><div style="margin-top:8px;display:grid;gap:6px">${logs || '<p class="muted">No activity.</p>'}</div></details>
     </div>
-    <h3 style="margin-top:20px">Messages</h3>
-    <div class="thread">${msgs}</div>
-    ${can('messageGuests') ? `<form onsubmit="return replyOrder(event,'${o.id}')" style="display:flex;gap:8px;margin-top:10px"><input id="replyInput" placeholder="Reply to guest…" style="flex:1" required><button class="small">Send</button></form>` : ''}
-    <h3 style="margin-top:20px">Activity log</h3>
-    <div style="max-height:220px;overflow:auto">${logs || '<p class="muted">No activity.</p>'}</div>
-  `);
+    <div class="ov-f">
+      ${more ? `<button type="button" class="ghost" onclick="toggleDrawerMore()">${ic('more', 'sm')}More</button>` : ''}
+      <span class="grow"></span>
+      ${o.status === 'ready' && o.paymentStatus !== 'paid' && !isLaundry() ? '<span class="ov-hint">Collect payment before pickup</span>' : ''}
+      ${primary}
+      ${state.drawer.more && more ? `<div class="menu" style="left:16px;bottom:64px">${more}</div>` : ''}
+    </div>`);
+}
+window.toggleDrawerMore = () => { state.drawer.more = !state.drawer.more; drawDrawer(); };
+window.askCancel = (id) => {
+  state.drawer.more = false; drawDrawer();
+  const o = state.drawer.o;
+  $('#cancelBox').innerHTML = `<div class="confirm"><p><b>Cancel order ${o.number}?</b> It leaves the board. You can undo for a few seconds afterwards.</p>
+    <input id="cancelReason" placeholder="Reason (optional), e.g. guest changed their mind" autocomplete="off">
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="small secondary" onclick="document.getElementById('cancelBox').innerHTML=''">Keep order</button><button type="button" class="small danger" onclick="cancelOrder('${id}')">Cancel order</button></div></div>`;
+  const b = document.querySelector('.modal .ov-b'); if (b) b.scrollTop = b.scrollHeight;
+  $('#cancelReason').focus();
 };
 
+// ---- accept: rooms as taps, a live price, quick pickup times ----
 window.openAccept = async (id) => {
-  const o = (window._orders || []).find(x => x.id === id) || await api('GET', `/orders/${id}`);
-  const est = (o.loads || 1) * (state.settings?.pricePerLoad || 0);
-  const _pk = new Date(); _pk.setDate(_pk.getDate() + 1); _pk.setHours(18, 0, 0, 0);
-  const pickupDefault = toLocalInput(_pk.toISOString());
-  openModal(`
-    <button class="ghost small close" onclick="closeModal()">✕</button>
-    <h3>Accept order #${o.number}</h3>
-    <p class="hint">${esc(o.guestName)} · ${o.items} items · ${o.loads} load(s)</p>
-    <div id="acceptMsg"></div>
-    <label>Room name${state.settings?.requireRoomOnAccept ? ' <span style="color:var(--danger)">*</span>' : ''}</label>
-    ${roomField('acRoom', o.room)}
-    <label>Ready for pickup</label>
-    <input id="acPickup" type="datetime-local" value="${pickupDefault}">
-    <p class="muted" style="font-size:12px;margin:6px 0 0">Defaults to 6:00 PM tomorrow — adjust if needed.</p>
-    <label>Price (${cur()})</label>
-    <input id="acPrice" type="number" step="0.01" min="0" value="${est.toFixed(2)}">
-    <p class="muted" style="font-size:12px;margin:6px 0 0">${o.loads} load(s) × ${money(state.settings?.pricePerLoad)} = ${money(est)} (editable).</p>
-    <label>Reason for price change <span class="muted">(required only if you change the amount)</span></label>
-    <input id="acPriceReason" placeholder="e.g. express service / extra items">
-    ${discountField('ac', null)}
-    <label>Payment <span class="muted">— guest chose ${paymentPref(o)}</span></label>
-    <select id="acPayStatus" onchange="document.getElementById('acMethodRow').style.display=this.value==='paid'?'block':'none'">
-      <option value="unpaid" ${o.paymentTiming !== 'now' ? 'selected' : ''}>Not paid yet</option>
-      <option value="paid" ${o.paymentTiming === 'now' ? 'selected' : ''}>Collect payment now</option>
-    </select>
-    <div id="acMethodRow" style="display:${o.paymentTiming === 'now' ? 'block' : 'none'}">
-      <label>Method</label>
-      <select id="acMethod"><option value="cash" ${o.paymentMethod !== 'card' ? 'selected' : ''}>Cash</option><option value="card" ${o.paymentMethod === 'card' ? 'selected' : ''}>Card</option></select>
-    </div>
-    <button class="btn-full" style="margin-top:16px" onclick="doAccept('${o.id}')">Accept & notify guest</button>
-  `);
+  const o = (state.orders || []).find(x => x.id === id) || await api('GET', `/orders/${id}`);
+  state.acc = { id, o, room: o.room || '', items: o.items, priceEdit: false, price: '', reason: '', pickup: 'tmw', when: '', payNow: o.paymentTiming === 'now', method: o.paymentMethod === 'card' ? 'card' : 'cash', disc: '', errs: {} };
+  drawAccept();
 };
-window.doAccept = async (id) => {
-  const room = ($('#acRoom').value || '').trim();
-  if (state.settings?.requireRoomOnAccept && !room) return notice($('#acceptMsg'), 'err', 'Please select a room before accepting.');
+function pickupChoices() {
+  const at = (days, h) => { const d = new Date(); d.setDate(d.getDate() + days); d.setHours(h, 0, 0, 0); return d; };
+  const list = [];
+  if (new Date().getHours() < 19) list.push(['tonight', 'Tonight 20:00', at(0, 20)]);
+  list.push(['tmw', 'Tomorrow 18:00', at(1, 18)]);
+  const d2 = at(2, 18); list.push(['2d', `${d2.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}, 18:00`, d2]);
+  return list;
+}
+function accTotals() {
+  const A = state.acc, per = state.settings?.piecesPerLoad || 25, ppl = state.settings?.pricePerLoad || 0;
+  const loads = Math.max(1, Math.ceil((Number(A.items) || 1) / per)), computed = round2m(loads * ppl);
+  const base = A.priceEdit && A.price !== '' ? round2m(Number(A.price)) : computed;
+  const d = (state.discounts || []).find(x => x.code === A.disc);
+  const off = d ? round2m(Math.min(base, d.type === 'percent' ? base * d.value / 100 : d.value)) : 0;
+  return { loads, computed, base, off, total: round2m(base - off) };
+}
+function drawAccept() {
+  const A = state.acc, o = A.o, T = accTotals(), rooms = state.settings?.rooms || [];
+  const req = state.settings?.requireRoomOnAccept;
+  const discs = can('discount') ? usableDiscounts() : [];
+  openSheet(`
+    <div class="ov-h"><h3>Accept <span class="tag" style="font-size:23px">${o.number}</span></h3><button type="button" class="close" onclick="closeModal()" aria-label="Close"></button></div>
+    <div class="ov-b">
+      <p class="sub">${esc(o.guestName)} asked for ${o.items} items · ${esc(paymentPref(o))}</p>
+      ${o.note ? `<div class="note">“${esc(o.note)}”</div>` : ''}
+      <div id="acceptMsg"></div>
+      <div class="field"><label>Room${req ? '' : ' <span class="muted">(optional)</span>'}</label>
+        ${rooms.length ? `<div class="chips">${rooms.map(r => `<button type="button" aria-pressed="${A.room === r}" onclick="accSet('room', this.dataset.v)" data-v="${esc(r)}">${esc(r)}</button>`).join('')}</div>`
+          : `<input id="accRoom" value="${esc(A.room)}" placeholder="e.g. Duafe" oninput="state.acc.room=this.value">`}
+        ${A.errs.room ? `<span class="err">${A.errs.room}</span>` : ''}</div>
+      <div class="field"><label for="accItems">Items counted at the desk</label>
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+          <div class="stepper"><button type="button" aria-label="One fewer" onclick="accSet('items', -1)">−</button><input id="accItems" class="num" inputmode="numeric" value="${A.items}" onchange="accSet('itemsTo', this.value)"><button type="button" aria-label="One more" onclick="accSet('items', 1)">+</button></div>
+          <span class="help num">${T.loads} load${T.loads > 1 ? 's' : ''} at ${money(state.settings?.pricePerLoad)} · up to ${state.settings?.piecesPerLoad || 25} items each</span></div></div>
+      <div class="calc"><div><small>Price</small><span class="amt">${moneyShort(T.total)}</span>${T.off ? `<small class="num">${moneyShort(T.base)} − ${esc(A.disc)} ${moneyShort(T.off)}</small>` : ''}</div>
+        ${A.priceEdit ? '' : `<button type="button" class="link" onclick="accSet('priceEdit')">Change price</button>`}</div>
+      ${A.priceEdit ? `<div class="field"><label for="accPrice">New price (${esc(cur())})</label><input id="accPrice" class="num" inputmode="decimal" value="${esc(A.price)}" oninput="state.acc.price=this.value;accReasonToggle()" onchange="drawAccept()">
+        <div id="accReasonBox" class="${round2m(Number(A.price)) !== T.computed ? '' : 'hidden'}"><label for="accReason">Why the change?</label><input id="accReason" value="${esc(A.reason)}" placeholder="For example: express service, extra bedding" oninput="state.acc.reason=this.value"></div>
+        ${A.errs.reason ? `<span class="err">${A.errs.reason}</span>` : ''}</div>` : ''}
+      <div class="field"><label>Ready by</label><div class="chips">${pickupChoices().map(([k, l]) => `<button type="button" aria-pressed="${A.pickup === k}" onclick="accSet('pickup','${k}')">${l}</button>`).join('')}<button type="button" aria-pressed="${A.pickup === 'other'}" onclick="accSet('pickup','other')">Other time…</button></div>
+        ${A.pickup === 'other' ? `<input id="accWhen" type="datetime-local" style="margin-top:8px" value="${esc(A.when || toLocalInput(new Date(Date.now() + 864e5).toISOString()))}" oninput="state.acc.when=this.value">` : ''}</div>
+      ${discs.length ? `<div class="field"><label>Discount code</label><div class="chips">${discs.map(d => `<button type="button" aria-pressed="${A.disc === d.code}" onclick="accSet('disc', this.dataset.v)" data-v="${esc(d.code)}">${ic('tag', 'sm')} ${esc(d.code)} · ${d.type === 'percent' ? d.value + '%' : moneyShort(d.value)}</button>`).join('')}</div></div>` : ''}
+      <button type="button" class="toggle-row" onclick="accSet('payNow')"><span><b>Collect payment now</b><small>${o.paymentTiming === 'now' ? 'The guest chose to pay now' : 'Otherwise they pay at pickup'}</small></span><i class="sw ${A.payNow ? 'on' : ''}"></i></button>
+      ${A.payNow ? `<div class="tiles">${['cash', 'card'].map(m => `<button type="button" class="tile" aria-pressed="${A.method === m}" onclick="accSet('method','${m}')">${ic(m, 'lg')}<b>${m === 'cash' ? 'Cash' : 'Card'}</b></button>`).join('')}</div>` : ''}
+    </div>
+    <div class="ov-f"><button type="button" class="ghost" onclick="closeModal()">Not now</button><span class="grow"></span><button type="button" id="accGo" onclick="doAccept()">Accept${A.payNow ? ' & record ' + moneyShort(T.total) : ''}</button></div>`, 'accept-' + o.id);
+}
+window.accReasonToggle = () => { const box = $('#accReasonBox'); if (box) box.classList.toggle('hidden', round2m(Number(state.acc.price)) === accTotals().computed); };
+window.accSet = (k, v) => {
+  const A = state.acc;
+  if (k === 'room') { A.room = v; delete A.errs.room; }
+  if (k === 'items') A.items = Math.max(1, (Number(A.items) || 1) + v);
+  if (k === 'itemsTo') A.items = Math.max(1, Math.floor(Number(v)) || 1);
+  if (k === 'priceEdit') { A.priceEdit = true; A.price = String(accTotals().computed); }
+  if (k === 'pickup') A.pickup = v;
+  if (k === 'disc') A.disc = A.disc === v ? '' : v;
+  if (k === 'payNow') A.payNow = !A.payNow;
+  if (k === 'method') A.method = v;
+  drawAccept();
+  if (k === 'priceEdit') { const i = $('#accPrice'); if (i) { i.focus(); i.select(); } }
+};
+window.doAccept = async () => {
+  const A = state.acc, T = accTotals(); A.errs = {};
+  const room = String(A.room || '').trim();
+  if (state.settings?.requireRoomOnAccept && !room) A.errs.room = 'Pick the guest’s room first.';
+  if (A.priceEdit && T.base !== T.computed && !String(A.reason).trim()) A.errs.reason = 'Say why the price changed. It goes in the order log.';
+  if (Object.keys(A.errs).length) return drawAccept();
+  const pick = pickupChoices().find(p => p[0] === A.pickup);
+  const pickupAt = A.pickup === 'other' ? (A.when ? new Date(A.when).toISOString() : null) : pick ? pick[2].toISOString() : null;
+  const btn = $('#accGo'); if (btn) btn.disabled = true;
   try {
-    const pickup = $('#acPickup').value ? new Date($('#acPickup').value).toISOString() : null;
-    await api('POST', `/orders/${id}/accept`, {
-      room, pickupAt: pickup, price: $('#acPrice').value,
-      priceReason: $('#acPriceReason').value.trim(),
-      discountCode: $('#acDiscount') ? $('#acDiscount').value : '',
-      paymentStatus: $('#acPayStatus').value, paymentMethod: $('#acMethod') ? $('#acMethod').value : 'cash',
+    await api('POST', `/orders/${A.id}/accept`, {
+      room, items: A.items, pickupAt,
+      price: A.priceEdit ? A.price : undefined, priceReason: String(A.reason || '').trim(),
+      discountCode: A.disc || '',
+      paymentStatus: A.payNow ? 'paid' : 'unpaid', paymentMethod: A.method,
     });
-    closeModal(); renderTab();
-  } catch (e) { notice($('#acceptMsg'), 'err', e.message); }
+    closeModal(); state.movedId = A.id; await refreshShift(); renderTab();
+    toast(`Accepted ${A.o.number}${A.payNow ? ` · ${moneyShort(T.total)} ${A.method} recorded` : ''}.`);
+    setTimeout(() => { state.movedId = null; }, 1200);
+  } catch (e) { if (btn) btn.disabled = false; notice($('#acceptMsg'), 'err', e.message); const b = document.querySelector('.modal .ov-b'); if (b) b.scrollTop = 0; }
 };
 
 window.openModify = async (id) => {
@@ -883,53 +1197,103 @@ window.doModify = async (id) => {
   } catch (e) { notice($('#modMsg'), 'err', e.message); }
 };
 
-window.advance = async (id, close) => {
-  try { await api('POST', `/orders/${id}/advance`, {}); if (close) closeModal(); renderTab(); }
-  catch (e) {
+// ---- moving orders on, with a few seconds to undo a wrong tap ----
+window.advance = async (id) => {
+  try {
+    const o = await api('POST', `/orders/${id}/advance`, {});
+    closeModal(); state.movedId = id; renderTab();
+    const told = o.guestEmail ? ` ${firstName(o.guestName)} has been told.` : '';
+    const msg = { cleaning: `${o.number} is in the wash.${told}`, ready: `${o.number} is ready for pickup.${told}`, completed: `${o.number} picked up.` }[o.status] || `${o.number} moved on.`;
+    toast(msg, { undo: () => undoMove(id) });
+    setTimeout(() => { if (state.movedId === id) state.movedId = null; }, 1200);
+  } catch (e) {
     // A stale re-click on an order that's already picked up shouldn't alarm anyone.
-    if (/already been picked up|already .*cancelled/i.test(e.message)) { if (close) closeModal(); renderTab(); }
-    else alert(e.message);
+    if (/already been picked up|already .*cancelled/i.test(e.message)) { closeModal(); renderTab(); }
+    else toast(e.message, { err: true });
   }
 };
-window.cancelOrder = async (id) => { const reason = prompt('Reason for cancelling (optional):'); if (reason === null) return; try { await api('POST', `/orders/${id}/cancel`, { reason }); closeModal(); renderTab(); } catch (e) { alert(e.message); } };
-window.revert = async (id, close) => { if (!confirm('Move this order back one stage?')) return; try { await api('POST', `/orders/${id}/revert`, {}); if (close) closeModal(); renderTab(); } catch (e) { alert(e.message); } };
+async function undoMove(id) {
+  const o = await api('POST', `/orders/${id}/undo`);
+  state.movedId = id; await refreshShift(); renderTab();
+  toast(`Undone. ${o.number} is back in ${STATUS_LONG[o.status]}.`);
+  setTimeout(() => { if (state.movedId === id) state.movedId = null; }, 1200);
+}
+window.cancelOrder = async (id) => {
+  const reason = $('#cancelReason') ? $('#cancelReason').value.trim() : '';
+  try {
+    const o = await api('POST', `/orders/${id}/cancel`, { reason });
+    closeModal(); renderTab();
+    toast(`${o.number} cancelled.`, { undo: () => undoMove(id) });
+  } catch (e) { notice($('#modalMsg'), 'err', e.message); }
+};
+window.revert = async (id) => {
+  try { const o = await api('POST', `/orders/${id}/revert`, {}); closeModal(); state.movedId = id; renderTab(); toast(`${o.number} moved back to ${STATUS_LONG[o.status]}.`); }
+  catch (e) { toast(e.message, { err: true }); }
+};
 window.reportDelay = async (id) => {
   const reason = prompt('Reason for the delay (this mutes the reminder for 30 minutes, then it resumes if the order still hasn\'t moved):');
   if (reason === null || !reason.trim()) return;
-  try { await api('POST', `/orders/${id}/delay-reason`, { reason: reason.trim() }); state._lastFollowUpPing = Date.now(); closeModal(); renderTab(); }
-  catch (e) { alert(e.message); }
+  try { await api('POST', `/orders/${id}/delay-reason`, { reason: reason.trim() }); state._lastFollowUpPing = Date.now(); closeModal(); renderTab(); toast('Delay noted. Reminders pause for 30 minutes.'); }
+  catch (e) { toast(e.message, { err: true }); }
 };
+
+// ---- take payment: the amount is the balance, the button says what gets recorded ----
 window.takePayment = async (id) => {
   const o = await api('GET', `/orders/${id}`);
-  const paidSoFar = Number(o.amountPaid) || 0;
-  const remaining = Math.max(0, round2m((Number(o.price) || 0) - paidSoFar));
-  const partial = can('partialPayment');
-  openModal(`
-    <button class="ghost small close" onclick="closeModal()">✕</button>
-    <h3>Take payment · #${o.number}</h3>
-    <p class="hint">${esc(o.guestName)} · total ${money(o.price)}${paidSoFar > 0 ? ` · already paid ${money(paidSoFar)}` : ''} · <b>${money(remaining)} due</b></p>
-    <div id="payMsg"></div>
-    <label>Amount (${cur()})</label>
-    <input id="payAmount" type="number" step="0.01" min="0" max="${remaining}" value="${remaining.toFixed(2)}" ${partial ? '' : 'readonly'}>
-    <p class="muted" style="font-size:12px;margin:6px 0 0">${partial ? `Enter less than ${money(remaining)} to record a partial payment.` : 'Full amount only — partial payments require permission.'}</p>
-    <label>Payment method</label>
-    <div class="choice">
-      <label><input type="radio" name="paym" value="cash" ${o.paymentMethod !== 'card' ? 'checked' : ''} /><span>Cash</span></label>
-      <label><input type="radio" name="paym" value="card" ${o.paymentMethod === 'card' ? 'checked' : ''} /><span>Card</span></label>
+  state.pay = { id, o, method: o.paymentMethod === 'card' ? 'card' : 'cash', part: false, amt: String(balanceOf(o)) };
+  drawPay();
+};
+function payAmount() { const P = state.pay, bal = balanceOf(P.o); return P.part ? Math.min(bal, Math.max(0, round2m(Number(P.amt) || 0))) : bal; }
+function drawPay() {
+  const P = state.pay, o = P.o, paid = Number(o.amountPaid) || 0, amt = payAmount(), loads = o.loads || 1;
+  const discs = can('discount') && can('modifyAccepted') && !paid ? usableDiscounts(o.discount && o.discount.code) : [];
+  const sh = state.shift && state.shift.open ? state.shift.shift : null;
+  openSheet(`
+    <div class="ov-h"><h3>Take payment</h3><button type="button" class="close" onclick="closeModal()" aria-label="Close"></button></div>
+    <div class="ov-b">
+      <div class="card-h" style="margin-top:-4px"><span class="tag">${o.number}</span><b>${esc(o.guestName)}</b>${o.room ? `<span class="room">${ic('door', 'sm')}${esc(o.room)}</span>` : ''}</div>
+      <div id="payMsg"></div>
+      <div class="calc"><div><small>${P.part ? 'Part payment' : 'Balance due'}</small><span class="amt" id="payBig">${money(amt)}</span>
+        <small class="num">${paid ? `${money(paid)} already paid of ${money(o.price)}` : `${o.items} items · ${loads} load${loads > 1 ? 's' : ''}`}</small></div>
+        ${can('partialPayment') ? `<button type="button" class="link" onclick="paySet('part')">${P.part ? 'Full balance' : 'Part payment'}</button>` : ''}</div>
+      ${P.part ? `<div class="field"><label for="payAmount">Amount taken (${esc(cur())})</label><input id="payAmount" class="num" inputmode="decimal" value="${esc(P.amt)}" oninput="state.pay.amt=this.value;payRefresh()"></div>` : ''}
+      <div class="field"><label>How did they pay?</label><div class="tiles">${['cash', 'card'].map(m => `<button type="button" class="tile" aria-pressed="${P.method === m}" onclick="paySet('method','${m}')">${ic(m, 'lg')}<b>${m === 'cash' ? 'Cash' : 'Card'}</b><small>${m === 'cash' ? 'Into the till' : 'On the card machine'}</small></button>`).join('')}</div></div>
+      ${discs.length ? `<div class="field"><label>Discount code</label><div class="chips">${discs.map(d => `<button type="button" aria-pressed="${!!(o.discount && o.discount.code === d.code)}" onclick="payDiscount(this.dataset.v)" data-v="${esc(d.code)}">${ic('tag', 'sm')} ${esc(d.code)} · ${d.type === 'percent' ? d.value + '%' : moneyShort(d.value)}</button>`).join('')}</div></div>` : ''}
+      <p class="muted" style="margin:0;font-size:13.5px;display:flex;gap:6px;align-items:center">${ic('staff', 'sm')}<span>Recorded as taken by <b style="color:var(--ink)">${esc(state.user.name)}</b>${sh ? ` in the ${sh.type} shift` : ''}.</span></p>
     </div>
-    <button class="btn-full" style="margin-top:16px" onclick="doPay('${o.id}')">Record payment</button>
-  `);
+    <div class="ov-f"><button type="button" class="ghost" onclick="closeModal()">Cancel</button><span class="grow"></span><button type="button" id="payGo" onclick="doPay()" ${amt > 0 ? '' : 'disabled'}>Record ${moneyShort(amt)} ${P.method}</button></div>`, 'pay-' + o.id);
+}
+window.payRefresh = () => { const amt = payAmount(); const big = $('#payBig'), go = $('#payGo'); if (big) big.textContent = money(amt); if (go) { go.textContent = `Record ${moneyShort(amt)} ${state.pay.method}`; go.disabled = !(amt > 0); } };
+window.paySet = (k, v) => {
+  const P = state.pay;
+  if (k === 'method') P.method = v;
+  if (k === 'part') { P.part = !P.part; P.amt = String(balanceOf(P.o)); }
+  drawPay();
+  if (k === 'part' && P.part) { const i = $('#payAmount'); if (i) { i.focus(); i.select(); } }
 };
-function round2m(n) { return Math.round((Number(n) || 0) * 100) / 100; }
-window.doPay = async (id) => {
+window.payDiscount = async (code) => {
+  const P = state.pay, on = P.o.discount && P.o.discount.code === code;
+  try { P.o = await api('PATCH', `/orders/${P.id}`, on ? { removeDiscount: true } : { discountCode: code }); P.amt = String(balanceOf(P.o)); drawPay(); }
+  catch (e) { notice($('#payMsg'), 'err', e.message); }
+};
+window.doPay = async () => {
+  const P = state.pay, amt = payAmount(), go = $('#payGo');
+  if (!(amt > 0)) return;
+  if (go) go.disabled = true;
   try {
-    const method = document.querySelector('input[name="paym"]:checked').value;
-    const amount = $('#payAmount') ? $('#payAmount').value : '';
-    await api('POST', `/orders/${id}/pay`, { amount, method });
-    closeModal(); await refreshShift(); renderTab();
-  } catch (e) { notice($('#payMsg'), 'err', e.message); }
+    await api('POST', `/orders/${P.id}/pay`, { amount: amt, method: P.method });
+    closeModal(); state.movedId = P.id; await refreshShift(); renderTab();
+    toast(`${moneyShort(amt)} ${P.method} recorded for ${P.o.number}.`);
+    setTimeout(() => { state.movedId = null; }, 1200);
+  } catch (e) { if (go) go.disabled = false; notice($('#payMsg'), 'err', e.message); }
 };
-window.replyOrder = async (e, id) => { e.preventDefault(); const t = $('#replyInput').value.trim(); if (!t) return false; try { await api('POST', `/orders/${id}/reply`, { text: t }); openOrder(id); } catch (err) { notice($('#modalMsg'), 'err', err.message); } return false; };
+window.replyOrder = async (e, id) => {
+  e.preventDefault();
+  const t = $('#replyInput').value.trim(); if (!t) return false;
+  try { await api('POST', `/orders/${id}/reply`, { text: t }); await openOrder(id); toast(`Sent to ${firstName(state.drawer.o.guestName)}.`); const b = document.querySelector('.modal .ov-b'); const th = document.querySelector('.modal .thread'); if (th && b) th.scrollIntoView({ block: 'nearest' }); }
+  catch (err) { notice($('#modalMsg'), 'err', err.message); }
+  return false;
+};
 
 // ---------------- MESSAGES ----------------
 async function renderMessages(view, silent) {
@@ -937,46 +1301,48 @@ async function renderMessages(view, silent) {
   const totalUnread = threads.reduce((a, t) => a + t.unread, 0);
   state.pendingMsg = totalUnread;
   setBadge('messages', totalUnread);
-  view.innerHTML = `<h2>Guest messages ${totalUnread ? `<span class="pill">${totalUnread} unread</span>` : ''}</h2>
+  view.innerHTML = `${totalUnread ? `<p class="hint"><span class="pill">${totalUnread} unread</span></p>` : ''}
     <div class="grid">${threads.map(t => `
-      <div class="ocard" onclick="openOrder('${t.id}')">
-        <div class="top"><span class="num">#${t.number} · ${esc(t.guestName)}</span>${t.unread ? `<span class="tab-badge">${t.unread}</span>` : ''}</div>
-        <div class="meta">${esc(t.lastMessage.sender === 'staff' ? 'You: ' : '')}${esc(t.lastMessage.text)}</div>
-        <div class="meta">${fmt(t.lastMessage.at)} · <span class="badge b-${t.status}">${STATUS_LABEL[t.status]}</span></div>
-      </div>`).join('') || '<p class="muted">No messages yet.</p>'}</div>`;
+      <article class="ocard" onclick="openOrder('${t.id}')" tabindex="0">
+        <div class="top"><span class="tag">${t.number}</span><b style="font-weight:600">${esc(t.guestName)}</b>${t.unread ? `<span class="unread" style="margin-left:auto">${ic('msg', 'sm')}${t.unread}</span>` : ''}</div>
+        <div class="note">${esc(t.lastMessage.sender === 'staff' ? 'You: ' : '')}${esc(t.lastMessage.text)}</div>
+        <div class="meta"><span>${fmt(t.lastMessage.at)}</span><span class="badge b-${t.status}">${STATUS_LONG[t.status] || t.status}</span></div>
+      </article>`).join('') || '<div class="empty">No messages yet. Guests can write to you from their tracking page.</div>'}</div>`;
 }
 function setBadge(tab, n) { const b = $('#badge-' + tab); if (!b) return; if (n > 0) { b.textContent = n; b.classList.remove('hidden'); } else b.classList.add('hidden'); }
 
 // ---------------- REPORTS ----------------
+const RANGE_PILLS = [['today', 'Today'], ['7', '7 days'], ['30', '30 days'], ['month', 'This month'], ['custom', 'Custom']];
+const SHIFT_PILLS = [['', 'All shifts'], ['AM', 'AM'], ['PM', 'PM'], ['Night', 'Night']];
 async function renderReports(view) {
   const today = new Date(); const p = n => String(n).padStart(2, '0');
   const toStr = d => `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-  view.innerHTML = `<h2>Revenue reporting</h2>
-    <div class="card">
-      <div class="toolbar">
-        <div><label>Quick range</label><select id="rpRange" onchange="applyRange()">
-          <option value="today">Today</option>
-          <option value="7">Last 7 days</option>
-          <option value="15">Last 15 days</option>
-          <option value="30">Last 30 days</option>
-          <option value="month">This month</option>
-          <option value="custom">Custom</option>
-        </select></div>
-        <div><label>From</label><input id="rpFrom" type="date" value="${toStr(today)}" onchange="onDateEdited()"></div>
-        <div><label>To</label><input id="rpTo" type="date" value="${toStr(today)}" onchange="onDateEdited()"></div>
-        <div><label>Shift</label><select id="rpShift">
-          <option value="">All shifts</option>
-          <option value="AM">AM (06–14)</option>
-          <option value="PM">PM (14–22)</option>
-          <option value="Night">Night (22–06)</option>
-        </select></div>
-        <button onclick="loadReport()">Run</button>
-        ${can('exportReports') ? `<button class="secondary" onclick="exportCsv()">CSV</button><button class="secondary" onclick="exportPdf()">PDF</button>` : ''}
-      </div>
+  state.rpOpen = state.rpOpen || null;
+  view.innerHTML = `
+    <div class="rhead">
+      <div class="pills" id="rpRangePills">${RANGE_PILLS.map(([v, l]) => `<button type="button" data-v="${v}" aria-pressed="${v === 'today'}" onclick="setReportRange('${v}')">${l}</button>`).join('')}</div>
+      <div class="pills" id="rpShiftPills">${SHIFT_PILLS.map(([v, l]) => `<button type="button" data-v="${v}" aria-pressed="${v === ''}" onclick="setReportShift('${v}')">${l}</button>`).join('')}</div>
+      <span class="grow"></span>
+      ${can('exportReports') ? `<button type="button" class="small secondary" onclick="exportCsv()">Export CSV</button><button type="button" class="small secondary" onclick="exportPdf()">Print / PDF</button>` : ''}
     </div>
-    <div id="reportBody"></div>`;
+    <div class="custom-range hidden" id="rpCustom" style="margin:-6px 0 16px">
+      <input id="rpFrom" type="date" value="${toStr(today)}" onchange="onDateEdited()" aria-label="From">
+      <span class="muted">to</span>
+      <input id="rpTo" type="date" value="${toStr(today)}" onchange="onDateEdited()" aria-label="To">
+      <button type="button" class="small" onclick="loadReport()">Show</button>
+    </div>
+    <select id="rpRange" class="hidden" aria-hidden="true" tabindex="-1">${RANGE_PILLS.map(([v]) => `<option value="${v}">${v}</option>`).join('')}<option value="15">15</option></select>
+    <select id="rpShift" class="hidden" aria-hidden="true" tabindex="-1">${SHIFT_PILLS.map(([v]) => `<option value="${v}">${v}</option>`).join('')}</select>
+    <div id="reportBody"><p class="muted">Loading…</p></div>`;
   loadReport();
 }
+function pressPill(groupId, v) { document.querySelectorAll(`#${groupId} button`).forEach(b => b.setAttribute('aria-pressed', b.dataset.v === v)); }
+window.setReportRange = (v) => {
+  $('#rpRange').value = v; pressPill('rpRangePills', v);
+  $('#rpCustom').classList.toggle('hidden', v !== 'custom');
+  if (v !== 'custom') applyRange();
+};
+window.setReportShift = (v) => { $('#rpShift').value = v; pressPill('rpShiftPills', v); loadReport(); };
 // Quick-range presets set the From/To fields, then re-run the report.
 window.applyRange = () => {
   const v = $('#rpRange').value;
@@ -993,7 +1359,7 @@ window.applyRange = () => {
   loadReport();
 };
 // If the user edits a date directly, switch the preset to "Custom".
-window.onDateEdited = () => { const r = $('#rpRange'); if (r) r.value = 'custom'; };
+window.onDateEdited = () => { const r = $('#rpRange'); if (r) r.value = 'custom'; pressPill('rpRangePills', 'custom'); };
 function reportParams() {
   return {
     from: new Date($('#rpFrom').value + 'T00:00:00').toISOString(),
@@ -1008,6 +1374,67 @@ function reportQs() {
   if (p.shift) s += `&shift=${encodeURIComponent(p.shift)}`;
   return s;
 }
+window.toggleShiftPays = (s) => { state.rpOpen = state.rpOpen === s ? null : s; if (window._report) drawReport(window._report); };
+window.loadReport = async () => {
+  const body = $('#reportBody'); if (!body) return;
+  try {
+    const r = await api('GET', '/report?' + reportQs());
+    window._report = r;
+    drawReport(r);
+  } catch (e) { body.innerHTML = `<div class="notice err">${esc(e.message)}</div>`; }
+};
+function drawReport(r) {
+  const t = r.totals, p = reportParams();
+  const shifts = ['AM', 'PM', 'Night'];
+  const maxCol = Math.max(1, ...shifts.map(s => r.byShift[s].collected));
+  const maxRev = Math.max(1, ...r.byDay.map(d => d.revenue));
+  $('#reportBody').innerHTML = `
+    ${r.range.shift && r.range.shift !== 'all' ? `<p class="hint">Showing the <b>${esc(r.range.shift)}</b> shift only (${SHIFT_TIME[r.range.shift]}).</p>` : ''}
+    <div class="kpis">
+      <div class="stat"><div class="k">Revenue</div><div class="v">${moneyShort(t.revenue)}</div><div class="s">orders accepted in range</div></div>
+      <div class="stat"><div class="k">Collected</div><div class="v">${moneyShort(t.collected)}</div><div class="s">by payment time</div></div>
+      <div class="stat ${t.outstanding > 0 ? 'warn' : ''}"><div class="k">Outstanding</div><div class="v">${moneyShort(t.outstanding)}</div><div class="s">still owed</div></div>
+      <div class="stat"><div class="k">Orders</div><div class="v">${t.orders}</div><div class="s">${t.paidCount ?? 0} paid · ${(t.partialCount ?? 0) + (t.unpaidCount ?? 0)} not yet</div></div>
+    </div>
+    <div class="minis">
+      <span>Cash <b>${money(r.byMethod.cash)}</b></span><span>Card <b>${money(r.byMethod.card)}</b></span>
+      <span>Loads <b>${t.loads}</b></span><span>Items <b>${t.items}</b></span><span>Average order <b>${money(t.avgOrderValue)}</b></span>
+      ${t.discounts ? `<span>Discounts <b>−${money(t.discounts)}</b> on ${t.discountedCount} order${t.discountedCount === 1 ? '' : 's'}</span>` : ''}
+    </div>
+    <div class="panel"><h3>Collected by shift</h3>
+      <p class="sub">Money counts in the shift it was taken in; revenue and loads count the shift the order was accepted in. Tap a shift for the payments behind it.</p>
+      ${shifts.map(s => {
+        const b = r.byShift[s], open = state.rpOpen === s, pays = (b.payments || []).slice().sort((x, y) => String(x.at).localeCompare(String(y.at)));
+        return `<button type="button" class="shiftrow" aria-expanded="${open}" onclick="toggleShiftPays('${s}')">
+            <span><b>${s}</b><small>${SHIFT_TIME[s]}</small></span>
+            <span><span class="sbar">${b.collected ? `<i style="width:${b.cash / maxCol * 100}%;background:var(--cash)"></i><i style="width:${b.card / maxCol * 100}%;background:var(--card-pay)"></i>` : ''}</span>
+              <small>${b.orders} order${b.orders === 1 ? '' : 's'} · ${moneyShort(b.revenue)} revenue · ${b.loads} load${b.loads === 1 ? '' : 's'}</small></span>
+            <b class="num" style="text-align:right">${money(b.collected)}</b>${ic(open ? 'chev' : 'right', 'sm')}</button>
+          ${open ? `<div class="paylist">${pays.length ? pays.map(x => `<div><span>${String(x.at).slice(11, 16)}</span><b>#${x.number}</b><span>${x.method === 'card' ? 'Card' : 'Cash'}${x.by ? ' · ' + esc(x.by) : ''}</span><b>${money(x.amount)}</b></div>`).join('') : '<div><span></span><span></span><span>No payments in this shift</span><span></span></div>'}</div>` : ''}`;
+      }).join('')}
+      <div class="legend"><span><i style="background:var(--cash)"></i>Cash</span><span><i style="background:var(--card-pay)"></i>Card</span></div>
+    </div>
+    <div class="panel"><h3>Revenue by day</h3><p class="sub">Orders accepted each day.</p>
+      ${r.byDay.length ? r.byDay.map(d => `<div class="daybar"><span class="muted num">${d.date}</span><span class="bar"><i style="width:${(d.revenue / maxRev * 100).toFixed(1)}%"></i></span><span class="num" style="text-align:right">${money(d.revenue)}</span></div>`).join('') : '<p class="muted" style="margin:0">No revenue in this range.</p>'}
+    </div>
+    <div class="panel flush"><h3>By staff</h3><p class="sub">Payments, Collected, Cash and Card count the money each person took in this range, by payment time.</p>
+      <div class="table-wrap"><table class="data"><thead><tr><th>Staff</th><th class="r">Accepted</th><th class="r">Cleaned</th><th class="r">Ready</th><th class="r">Picked up</th><th class="r">Payments</th><th class="r">Collected</th><th class="r">Cash</th><th class="r">Card</th></tr></thead>
+      <tbody>${(r.byStaff || []).map(s => `<tr><td><b>${esc(s.name)}</b></td><td class="r">${s.accepted}</td><td class="r">${s.cleaned}</td><td class="r">${s.ready}</td><td class="r">${s.completed}</td><td class="r">${s.payments}</td><td class="r">${money(s.collected)}</td><td class="r">${money(s.cash)}</td><td class="r">${money(s.card)}</td></tr>`).join('') || '<tr><td colspan="9" class="muted">No activity</td></tr>'}</tbody></table></div></div>
+    <div class="panel flush"><h3>Orders in range <span class="muted" style="font-weight:500">${r.orders.length}</span></h3>
+      <div class="table-wrap"><table class="data"><thead><tr><th>#</th><th>Accepted</th><th>Shift</th><th>Guest</th><th>Room</th><th class="r">Loads</th><th class="r">Total</th><th>Discount</th><th>Payment</th><th>Accepted by</th><th>Ready by</th><th>Paid by</th><th>Status</th></tr></thead>
+      <tbody>${r.orders.map(o => `<tr onclick="openOrder('${o.id}')"><td class="num">${o.number}</td><td>${fmt(o.acceptedAt || o.createdAt)}</td><td>${o.shift}</td><td>${esc(o.guestName)}</td><td>${esc(o.room || '—')}</td><td class="r">${o.loads}</td><td class="r">${money(o.price)}</td><td>${o.discount ? esc(o.discount.code) + ' −' + money(o.discount.amount) : '—'}</td><td>${o.paymentStatus === 'paid' ? 'Paid · ' + esc(o.paymentMethod || '') : o.paymentStatus === 'partial' ? 'Part paid' : 'Unpaid'}</td><td>${esc(nm(o.acceptedBy))}</td><td>${esc(nm(o.readyBy))}</td><td>${esc(nm(o.paidBy))}</td><td><span class="badge b-${o.status}">${STATUS_LONG[o.status] || o.status}</span></td></tr>`).join('') || '<tr><td colspan="13" class="muted">None</td></tr>'}</tbody></table></div></div>
+    <div id="shiftHistory"></div>`;
+  loadShiftHistory(p.from, p.to);
+}
+async function loadShiftHistory(from, to) {
+  let shifts = [];
+  try { shifts = await api('GET', `/shifts?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`); } catch { return; }
+  const host = $('#shiftHistory'); if (!host || !shifts.length) return;
+  host.innerHTML = `<div class="panel flush"><h3>Shift handovers</h3><p class="sub">Who opened and closed each shift, and what changed hands.</p>
+    <div class="table-wrap"><table class="data"><thead><tr><th>Opened</th><th>By</th><th>Shift</th><th>Closed</th><th class="r">Received</th><th class="r">Paid</th><th class="r">Picked up</th><th class="r">In progress</th><th>Area checked</th><th>Status</th></tr></thead>
+    <tbody>${shifts.map(s => { const a = s.activity || {}; return `<tr><td>${fmt(s.openedAt)}</td><td>${esc(s.cashierName)}</td><td>${s.type}</td><td>${s.closedAt ? fmt(s.closedAt) : '—'}</td><td class="r">${a.received ? a.received.count : '—'}</td><td class="r">${a.payments ? money(a.payments.total) : '—'}</td><td class="r">${a.pickedUp ? a.pickedUp.count : '—'}</td><td class="r">${s.closingInProgress != null ? s.closingInProgress : '—'}</td><td>${s.acknowledged ? 'Yes' : '—'}</td><td>${s.status === 'open' ? '<span class="pill">open</span>' : 'closed'}</td></tr>`; }).join('')}</tbody></table></div></div>`;
+}
+
 // ---------------- DISCOUNTS (shared bits) ----------------
 // The codes a user may apply. Silently empty for anyone without the permission,
 // so the picker simply doesn't appear for them.
@@ -1041,69 +1468,6 @@ function discountPatch(prefix) {
   return code ? { discountCode: code } : { removeDiscount: true };
 }
 
-window.toggleBd = (id) => { const el = document.getElementById(id); if (el) el.classList.toggle('hidden'); };
-// The orders whose payments make up a shift's cash and card figures, so a total
-// can be traced back to the individual payments behind it.
-function methodBreakdown(b) {
-  const line = (label, total, method) => {
-    const list = (b.payments || []).filter(p => p.method === method);
-    const items = list.map(p => `<span style="display:inline-block;margin:2px 10px 2px 0;white-space:nowrap">#${p.number} <b>${money(p.amount)}</b> <span class="muted">${String(p.at).slice(11, 16)}${p.by ? ' · ' + esc(p.by) : ''}</span></span>`).join('');
-    return `<div style="margin:4px 0"><span class="muted">↳ ${label}</span> <b>${money(total)}</b>${list.length ? ` <span class="muted">— ${list.length} payment${list.length > 1 ? 's' : ''}</span><div style="margin:2px 0 0 14px;font-size:12px">${items}</div>` : ' <span class="muted">— none</span>'}</div>`;
-  };
-  return line('Cash', b.cash, 'cash') + line('Card', b.card, 'card');
-}
-window.loadReport = async () => {
-  const p = reportParams();
-  const r = await api('GET', '/report?' + reportQs());
-  window._report = r;
-  const t = r.totals;
-  const maxRev = Math.max(1, ...r.byDay.map(d => d.revenue));
-  $('#reportBody').innerHTML = `
-    ${r.range.shift && r.range.shift !== 'all' ? `<p class="hint" style="margin:0 0 12px">Showing <b>${r.range.shift}</b> shift only (${SHIFT_TIME[r.range.shift]}).</p>` : ''}
-    <div class="stats">
-      <div class="stat"><div class="k">Revenue</div><div class="v">${money(t.revenue)}</div></div>
-      <div class="stat"><div class="k">Collected</div><div class="v">${money(t.collected)}</div></div>
-      <div class="stat"><div class="k">Outstanding</div><div class="v">${money(t.outstanding)}</div></div>
-      <div class="stat"><div class="k">Orders</div><div class="v">${t.orders}</div></div>
-      <div class="stat"><div class="k">Loads</div><div class="v">${t.loads}</div></div>
-      <div class="stat"><div class="k">Items</div><div class="v">${t.items}</div></div>
-      <div class="stat"><div class="k">Avg order</div><div class="v">${money(t.avgOrderValue)}</div></div>
-      <div class="stat"><div class="k">Cash / Card</div><div class="v" style="font-size:18px">${money(r.byMethod.cash)} / ${money(r.byMethod.card)}</div></div>
-      ${t.discounts ? `<div class="stat"><div class="k">Discounts</div><div class="v">-${money(t.discounts)}</div><div class="muted" style="font-size:11px">${t.discountedCount} order(s)</div></div>` : ''}
-    </div>
-    <div class="card"><h3 style="margin-top:0">Revenue by day</h3>
-      ${r.byDay.length ? r.byDay.map(d => `<div style="display:flex;align-items:center;gap:10px;margin:6px 0">
-        <span class="muted" style="width:96px;font-size:12px">${d.date}</span>
-        <div style="flex:1;background:#eef2f5;border-radius:6px;height:20px;overflow:hidden"><div style="width:${(d.revenue / maxRev * 100).toFixed(1)}%;background:var(--accent);height:100%"></div></div>
-        <span style="width:90px;text-align:right;font-size:13px">${money(d.revenue)}</span>
-      </div>`).join('') : '<p class="muted">No revenue in this range.</p>'}
-    </div>
-    <div class="card"><h3 style="margin-top:0">By shift</h3>
-      <p class="hint" style="margin-top:-4px">Revenue &amp; loads count orders <b>accepted</b> in each shift. Collected counts money <b>received</b> during the shift — tap it to see the cash / card split and the orders behind each.</p>
-      <div class="table-wrap"><table class="data"><thead><tr><th>Shift</th><th>Orders</th><th>Loads</th><th>Revenue</th><th>Collected</th></tr></thead>
-      <tbody>${['AM', 'PM', 'Night'].map(s => { const b = r.byShift[s]; return `<tr><td><b>${s}</b> <span class="muted">${SHIFT_TIME[s]}</span></td><td>${b.orders}</td><td>${b.loads}</td><td>${money(b.revenue)}</td><td><button onclick="toggleBd('bd-${s}')" style="background:none;border:0;color:var(--accent);padding:0;cursor:pointer;font:inherit;text-decoration:underline">${money(b.collected)} ▾</button></td></tr>
-      <tr id="bd-${s}" class="hidden"><td colspan="5" style="padding-left:20px">${methodBreakdown(b)}</td></tr>`; }).join('')}</tbody></table></div>
-    </div>
-    <div class="card"><h3 style="margin-top:0">By staff</h3>
-      <p class="hint" style="margin-top:-4px">Payments / Collected / Cash / Card count the money each person <b>took</b> in this range, by payment time — regardless of when the order was accepted.</p>
-      <div class="table-wrap"><table class="data"><thead><tr><th>Staff</th><th>Accepted</th><th>Cleaned</th><th>Ready</th><th>Picked up</th><th>Payments</th><th>Collected</th><th>Cash</th><th>Card</th></tr></thead>
-      <tbody>${(r.byStaff || []).map(s => `<tr><td>${esc(s.name)}</td><td>${s.accepted}</td><td>${s.cleaned}</td><td>${s.ready}</td><td>${s.completed}</td><td>${s.payments}</td><td>${money(s.collected)}</td><td>${money(s.cash)}</td><td>${money(s.card)}</td></tr>`).join('') || '<tr><td colspan="9" class="muted">No activity</td></tr>'}</tbody></table></div>
-    </div>
-    <div class="card"><h3 style="margin-top:0">Orders in range (${r.orders.length})</h3>
-      <div class="table-wrap"><table class="data"><thead><tr><th>#</th><th>Date</th><th>Shift</th><th>Guest</th><th>Room</th><th>Loads</th><th>Total</th><th>Discount</th><th>Payment</th><th>Accepted</th><th>Ready</th><th>Paid by</th><th>Status</th></tr></thead>
-      <tbody>${r.orders.map(o => `<tr><td>#${o.number}</td><td>${fmt(o.acceptedAt || o.createdAt)}</td><td>${o.shift}</td><td>${esc(o.guestName)}</td><td>${esc(o.room || '—')}</td><td>${o.loads}</td><td>${money(o.price)}</td><td>${o.discount ? esc(o.discount.code) + ' −' + money(o.discount.amount) : '—'}</td><td>${o.paymentStatus === 'paid' ? 'Paid (' + (o.paymentMethod || '') + ')' : 'Unpaid'}</td><td>${esc(nm(o.acceptedBy))}</td><td>${esc(nm(o.readyBy))}</td><td>${esc(nm(o.paidBy))}</td><td><span class="badge b-${o.status}">${STATUS_LABEL[o.status]}</span></td></tr>`).join('') || '<tr><td colspan="13" class="muted">None</td></tr>'}</tbody></table></div>
-    </div>
-    <div id="shiftHistory"></div>`;
-  loadShiftHistory(p.from, p.to);
-};
-async function loadShiftHistory(from, to) {
-  let shifts = [];
-  try { shifts = await api('GET', `/shifts?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`); } catch { return; }
-  if (!shifts.length) return;
-  $('#shiftHistory').innerHTML = `<div class="card"><h3 style="margin-top:0">Shift handover history</h3>
-    <div class="table-wrap"><table class="data"><thead><tr><th>Opened</th><th>Cashier</th><th>Shift</th><th>Closed</th><th>Received</th><th>Paid</th><th>Picked up</th><th>In progress</th><th>Area checked</th><th>Status</th></tr></thead>
-    <tbody>${shifts.map(s => { const a = s.activity || {}; return `<tr><td>${fmt(s.openedAt)}</td><td>${esc(s.cashierName)}</td><td>${s.type}</td><td>${s.closedAt ? fmt(s.closedAt) : '—'}</td><td>${a.received ? a.received.count : '—'}</td><td>${a.payments ? money(a.payments.total) : '—'}</td><td>${a.pickedUp ? a.pickedUp.count : '—'}</td><td>${s.closingInProgress != null ? s.closingInProgress : '—'}</td><td>${s.acknowledged ? '✓' : '—'}</td><td>${s.status === 'open' ? '<span class="pill">open</span>' : 'closed'}</td></tr>`; }).join('')}</tbody></table></div></div>`;
-}
 const SHIFT_TIME = { AM: '06:00–14:00', PM: '14:00–22:00', Night: '22:00–06:00' };
 function hourOptions(sel) {
   let out = '';
@@ -1157,7 +1521,7 @@ window.exportPdf = () => {
 // ---------------- CASHIERS ----------------
 async function renderCashiers(view) {
   const list = await api('GET', '/cashiers');
-  view.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><h2>Cashiers & access levels</h2><button onclick="openCashier()">+ Add cashier</button></div>
+  view.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"><p class="hint" style="margin:0">Everyone who signs in, and what each person may do.</p><button onclick="openCashier()">+ Add staff</button></div>
     <div class="grid" style="margin-top:12px">${list.map(c => `
       <div class="card" style="margin:0">
         <div style="display:flex;justify-content:space-between;align-items:center">
@@ -1259,7 +1623,7 @@ async function renderSettings(view) {
   const seq = await api('GET', '/sequence').catch(() => ({ next: '—' }));
   const staffList = await api('GET', '/cashiers').catch(() => []);
   const orderUrl = (s.baseUrl || location.origin) + '/order';
-  view.innerHTML = `<h2>Settings</h2>
+  view.innerHTML = `
     <div id="setMsg"></div>
     <div class="card">
       <h3 style="margin-top:0">Branding</h3>
@@ -1619,7 +1983,22 @@ window.downloadQr = () => {
 };
 
 // ---------------- modal ----------------
-function openModal(html) { $('#modalHost').innerHTML = `<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">${html}</div></div>`; }
+function openModal(html, cls = '') {
+  $('#modalHost').innerHTML = `<div class="modal-bg ${cls.includes('drawer') ? 'drawer-bg' : ''}" onclick="if(event.target===this)closeModal()"><div class="modal ${cls}" role="dialog" aria-modal="true">${html}</div></div>`;
+}
+// A sheet that redraws in place (taps on chips, steppers) keeps its scroll and doesn't re-animate.
+function openSheet(html, key, cls = 'sheet') {
+  const cur = $('#modalHost').querySelector('.modal');
+  if (cur && cur.dataset.key === key) {
+    const b = cur.querySelector('.ov-b'), top = b ? b.scrollTop : 0;
+    cur.innerHTML = html;
+    const b2 = cur.querySelector('.ov-b'); if (b2) b2.scrollTop = top;
+    return;
+  }
+  openModal(html, cls);
+  $('#modalHost').querySelector('.modal').dataset.key = key;
+}
+function openDrawer(html) { openSheet(html, 'order-' + (state.drawer && state.drawer.id), 'sheet drawer'); }
 window.closeModal = () => { $('#modalHost').innerHTML = ''; };
 
 // Test hooks (harmless in production).

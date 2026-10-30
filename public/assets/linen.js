@@ -44,6 +44,8 @@ const LN_SUBS = [
   { id: 'setup', label: 'Setup', show: () => can('linenManage') },
 ];
 
+const LN_DAILY = ['overview', 'rooms', 'wash', 'stock'];
+
 // Housekeeping and laundry staff get the simple picture screens (linen-simple.js);
 // supervisors and admins get the full tab, and can open the staff screens too.
 function lnSimpleMode() { return ['housekeeping', 'laundry'].includes(state.user?.role); }
@@ -53,8 +55,11 @@ async function renderLinen(view) {
   if (lnSimpleMode()) return renderLinenSimple(view);
   const subs = LN_SUBS.filter((s) => s.show());
   if (!subs.find((s) => s.id === LN.sub)) LN.sub = 'overview';
-  view.innerHTML = `<div class="ln-subnav">${subs.map((s) => { const n = s.badge ? s.badge() : 0;
-    return `<button class="${s.id === LN.sub ? 'active' : ''}" onclick="lnGo('${s.id}')">${s.label}${n ? `<span class="tab-badge">${n}</span>` : ''}</button>`; }).join('')}</div><div id="lnView"></div>`;
+  // Daily jobs first, records and setup second.
+  const btn = (s) => { const n = s.badge ? s.badge() : 0;
+    return `<button type="button" class="${s.id === LN.sub ? 'active' : ''}" onclick="lnGo('${s.id}')">${s.label}${n ? `<span class="tab-badge">${n}</span>` : ''}</button>`; };
+  const group = (label, ids) => { const list = subs.filter((s) => ids.includes(s.id)); return list.length ? `<div class="g"><small>${label}</small><div>${list.map(btn).join('')}</div></div>` : ''; };
+  view.innerHTML = `<div class="ln-subnav">${group('Daily', LN_DAILY)}${group('Manage', subs.map((s) => s.id).filter((id) => !LN_DAILY.includes(id)))}</div><div id="lnView"></div>`;
   const v = $('#lnView');
   if (LN.sub === 'staff') return renderLinenSimple(v);
   ({ overview: lnOverview, review: lnReview, rooms: lnRooms, wash: lnWash, stock: lnStock, pieces: lnPieces, reports: lnReports, activity: lnActivity, setup: lnSetup })[LN.sub](v);
