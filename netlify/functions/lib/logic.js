@@ -67,6 +67,7 @@ export function defaultSettings() {
     turnaroundHours: 24,
     requireEmail: true, // guest must give an email when ordering
     requireRoomOnAccept: true, // reception must set a room when accepting
+    requirePrepay: false, // every order is paid in full at drop-off, before it goes into the wash
     followUpHours: 1, // accepted orders older than this need follow-up
     followUpEveryHours: 1, // repeat the email/push reminder this often
     pickupLeadHours: 3, // start "prepare for pickup" reminders this many hours before pickup
@@ -116,6 +117,7 @@ export async function updateSettings(patch) {
   next.rooms = normalizeRooms(next.rooms);
   next.requireEmail = !!next.requireEmail;
   next.requireRoomOnAccept = !!next.requireRoomOnAccept;
+  next.requirePrepay = !!next.requirePrepay;
   next.alertRecipients = normalizeEmails(next.alertRecipients);
   next.accentColor = isHex(next.accentColor) ? next.accentColor : DEFAULT_COLORS.accentColor;
   next.hoverColor = isHex(next.hoverColor) ? next.hoverColor : DEFAULT_COLORS.hoverColor;
@@ -261,8 +263,9 @@ export async function createOrder({ guestName, guestEmail, items, note, paymentT
   if (!n || n < 1) throw httpError(400, 'Number of items must be at least 1');
 
   // Payment preference chosen by the guest at order time (form enforces the choice;
-  // default to pay-at-pickup and cash if somehow omitted).
-  const timing = paymentTiming === 'now' ? 'now' : 'pickup';
+  // default to pay-at-pickup and cash if somehow omitted). When the property takes
+  // payment up front there is no choice: everyone pays at drop-off.
+  const timing = settings.requirePrepay || paymentTiming === 'now' ? 'now' : 'pickup';
   const method = timing === 'now' ? (paymentMethod === 'card' ? 'card' : 'cash') : null;
   const orders = await getCollection(K_ORDERS);
   const number = await nextOrderNumber();
@@ -365,6 +368,17 @@ export async function acceptOrder(id, data, actor) {
     o.listPrice = o.price;
     // Default pickup = 6:00 PM the following day, unless reception picked one.
     o.pickupAt = data.pickupAt || nextDaySixPM();
+    // Payment up front: the full amount must be recorded with the acceptance. Checked
+    // before the discount is applied, because applying one counts a use of the code.
+    if (settings.requirePrepay) {
+      const amountGiven = data.amountPaid != null && data.amountPaid !== '';
+      if (data.paymentStatus !== 'paid' && !amountGiven) throw httpError(400, 'Payment is taken up front. Record the full payment to accept this order.');
+      if (amountGiven) {
+        let due = o.price;
+        if (data.discountCode) { const { d } = await usableDiscount(data.discountCode); due = round2(o.price - discountAmountFor(o.price, d)); }
+        if (Number(data.amountPaid) < due - 0.001) throw httpError(400, `Payment is taken up front. Record the full ${settings.currency.symbol}${due} to accept this order.`);
+      }
+    }
     // A discount code may be applied right at acceptance, before any payment.
     let discountNote = '';
     if (data.discountCode) {
@@ -396,6 +410,11 @@ export async function advanceStatus(id, target, actor) {
     // Laundry staff only run cleaning → ready; they can't mark an order picked up.
     if (expected === 'completed' && actor?.role === 'laundry') {
       throw httpError(403, 'Laundry staff cannot mark orders as picked up — reception handles that.');
+    }
+    // With payment up front, nothing goes into the wash unpaid (this also catches
+    // orders accepted before the setting was switched on).
+    if (expected === 'cleaning' && settings.requirePrepay && o.paymentStatus !== 'paid') {
+      throw httpError(409, 'Payment is taken up front. Take the full payment before this order goes into the wash.');
     }
     // An order cannot be picked up (completed) before it has been paid.
     if (expected === 'completed' && o.paymentStatus !== 'paid') {

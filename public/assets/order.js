@@ -31,6 +31,12 @@ function applyBrand(s) {
     $('#priceHint').textContent =
       `${money(s.pricePerLoad)} per load of up to ${s.piecesPerLoad} items${hrs ? `, usually ready within ${hrs} hours` : ''}. Reception confirms the final price when you drop off.`;
   }
+  // Payment up front: no choice of when to pay, only how.
+  if (s.requirePrepay) {
+    $('#timingChoice').className = '';
+    $('#timingChoice').innerHTML = '<input type="radio" name="timing" value="now" checked hidden><p class="muted" style="margin:0;font-size:14px">You pay in full at reception when you drop off your laundry.</p>';
+    $('#methodRow').style.display = 'block';
+  }
   // Email may be optional if the admin turned that off.
   if (s.requireEmail === false) {
     const em = $('#email');
