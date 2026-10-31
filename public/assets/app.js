@@ -822,9 +822,13 @@ function stageAt(o, stage) {
 }
 
 // What needs a human, using the same rules the reminders already follow.
+// Settings → "Payment up front": an accepted order can't go into the wash until it is paid in full.
+const prepay = () => !!state.settings?.requirePrepay;
+const awaitingPrepay = (o) => prepay() && o.status === 'accepted' && o.paymentStatus !== 'paid';
 function attentionOf(o) {
   if (!['new', 'accepted', 'cleaning', 'ready'].includes(o.status)) return null;
   const now = Date.now();
+  if (awaitingPrepay(o)) return { kind: 'warn', icon: 'card', text: isLaundry() ? 'Waiting for payment at reception' : 'Take payment before it goes into the wash' };
   if (isSnoozedO(o)) return { kind: 'calm', icon: 'pause', text: 'Delay noted' + (o.delayReason ? ': ' + o.delayReason : '') };
   if (acceptedTooLong(o)) return { kind: 'warn', icon: 'clock', text: `Waiting ${dur(now - new Date(o.acceptedAt))} to start` };
   if (o.status === 'ready' && o.readyAt && now - new Date(o.readyAt) > (state.settings?.readyStuckHours || 12) * 3600000) {
@@ -839,6 +843,7 @@ const needsAttention = (o) => { const a = attentionOf(o); return !!a && a.kind !
 // The one next step for this order, for this person.
 function nextAction(o) {
   if (o.status === 'new') return can('acceptOrders') ? { label: 'Accept', fn: `openAccept('${o.id}')` } : null;
+  if (awaitingPrepay(o)) return !isLaundry() && can('takePayment') ? { label: 'Take payment', fn: `takePayment('${o.id}')`, soft: true } : null;
   if (o.status === 'accepted') return can('advanceStatus') ? { label: 'Start cleaning', fn: `advance('${o.id}')` } : null;
   if (o.status === 'cleaning') return can('advanceStatus') ? { label: 'Mark ready', fn: `advance('${o.id}')` } : null;
   if (o.status === 'ready') {
@@ -952,20 +957,22 @@ document.addEventListener('scroll', (e) => {
 
 // ---- the laundry attendant's queue: only what they can act on ----
 function attendantHtml(orders) {
-  const acc = orders.filter(o => o.status === 'accepted').sort(byPickup);
+  // Orders still waiting for payment up front go to the bottom, without a Start button.
+  const acc = orders.filter(o => o.status === 'accepted').sort(byPickup).sort((a, b) => awaitingPrepay(a) - awaitingPrepay(b));
   const cln = orders.filter(o => o.status === 'cleaning').sort(byPickup);
   const nNew = orders.filter(o => o.status === 'new').length;
   const big = (o, i, btn) => {
     const a = attentionOf(o), loads = o.loads || 1;
     const started = o.status === 'cleaning' ? stageAt(o, 'cleaning') : null;
-    return `<article class="bigcard ${i === 0 && o.status === 'accepted' ? 'next' : ''} ${state.movedId === o.id ? 'moved' : ''}" onclick="openOrder('${o.id}')">
-      ${i === 0 && o.status === 'accepted' ? '<span class="eyebrow">Next up</span>' : ''}
+    const first = i === 0 && o.status === 'accepted' && !awaitingPrepay(o);
+    return `<article class="bigcard ${first ? 'next' : ''} ${state.movedId === o.id ? 'moved' : ''}" onclick="openOrder('${o.id}')">
+      ${first ? '<span class="eyebrow">Next up</span>' : ''}
       <div class="card-h"><span class="tag">${o.number}</span><span class="room ${o.room ? '' : 'none'}">${o.room ? ic('door', 'sm') + esc(o.room) : 'No room'}</span></div>
       <div class="guest">${esc(o.guestName)}</div>
       <div class="meta"><span class="num">${o.items} items · ${loads} load${loads > 1 ? 's' : ''}</span>${o.pickupAt ? `<span>${ic('clock', 'sm')}Ready by ${dayLabel(o.pickupAt)}</span>` : ''}</div>
       ${started ? `<div class="meta"><span>${ic('washer', 'sm')}Started ${hm(started)}${o.cleaningBy ? ' by ' + esc(o.cleaningBy.name) : ''} · ${dur(Date.now() - new Date(started))} ago</span></div>` : ''}
       ${a ? `<div class="attn ${a.kind === 'bad' ? 'bad' : a.kind === 'calm' ? 'calm' : ''}">${ic(a.icon, 'sm')}<span>${esc(a.text)}</span></div>` : ''}
-      ${can('advanceStatus') ? `<button type="button" class="big btn-full" onclick="event.stopPropagation();advance('${o.id}')">${btn}</button>` : ''}
+      ${can('advanceStatus') && !awaitingPrepay(o) ? `<button type="button" class="big btn-full" onclick="event.stopPropagation();advance('${o.id}')">${btn}</button>` : ''}
     </article>`;
   };
   return `${nNew ? `<div class="upcoming">${ic('bell', 'sm')}<span><b>${nNew} new</b> waiting at reception. They appear here once accepted.</span></div>` : ''}
@@ -1065,7 +1072,7 @@ window.askCancel = (id) => {
 // ---- accept: rooms as taps, a live price, quick pickup times ----
 window.openAccept = async (id) => {
   const o = (state.orders || []).find(x => x.id === id) || await api('GET', `/orders/${id}`);
-  state.acc = { id, o, room: o.room || '', items: o.items, priceEdit: false, price: '', reason: '', pickup: 'tmw', when: '', payNow: o.paymentTiming === 'now', method: o.paymentMethod === 'card' ? 'card' : 'cash', disc: '', errs: {} };
+  state.acc = { id, o, room: o.room || '', items: o.items, priceEdit: false, price: '', reason: '', pickup: 'tmw', when: '', payNow: prepay() || o.paymentTiming === 'now', method: o.paymentMethod === 'card' ? 'card' : 'cash', disc: '', errs: {} };
   drawAccept();
 };
 function pickupChoices() {
@@ -1110,10 +1117,11 @@ function drawAccept() {
       <div class="field"><label>Ready by</label><div class="chips">${pickupChoices().map(([k, l]) => `<button type="button" aria-pressed="${A.pickup === k}" onclick="accSet('pickup','${k}')">${l}</button>`).join('')}<button type="button" aria-pressed="${A.pickup === 'other'}" onclick="accSet('pickup','other')">Other time…</button></div>
         ${A.pickup === 'other' ? `<input id="accWhen" type="datetime-local" style="margin-top:8px" value="${esc(A.when || toLocalInput(new Date(Date.now() + 864e5).toISOString()))}" oninput="state.acc.when=this.value">` : ''}</div>
       ${discs.length ? `<div class="field"><label>Discount code</label><div class="chips">${discs.map(d => `<button type="button" aria-pressed="${A.disc === d.code}" onclick="accSet('disc', this.dataset.v)" data-v="${esc(d.code)}">${ic('tag', 'sm')} ${esc(d.code)} · ${d.type === 'percent' ? d.value + '%' : moneyShort(d.value)}</button>`).join('')}</div></div>` : ''}
-      <button type="button" class="toggle-row" onclick="accSet('payNow')"><span><b>Collect payment now</b><small>${o.paymentTiming === 'now' ? 'The guest chose to pay now' : 'Otherwise they pay at pickup'}</small></span><i class="sw ${A.payNow ? 'on' : ''}"></i></button>
+      ${prepay() ? `<div class="toggle-row static"><span><b>Payment up front</b><small>Take the full amount now. Nothing goes into the wash unpaid.</small></span></div>`
+        : `<button type="button" class="toggle-row" onclick="accSet('payNow')"><span><b>Collect payment now</b><small>${o.paymentTiming === 'now' ? 'The guest chose to pay now' : 'Otherwise they pay at pickup'}</small></span><i class="sw ${A.payNow ? 'on' : ''}"></i></button>`}
       ${A.payNow ? `<div class="tiles">${['cash', 'card'].map(m => `<button type="button" class="tile" aria-pressed="${A.method === m}" onclick="accSet('method','${m}')">${ic(m, 'lg')}<b>${m === 'cash' ? 'Cash' : 'Card'}</b></button>`).join('')}</div>` : ''}
     </div>
-    <div class="ov-f"><button type="button" class="ghost" onclick="closeModal()">Not now</button><span class="grow"></span><button type="button" id="accGo" onclick="doAccept()">Accept${A.payNow ? ' & record ' + moneyShort(T.total) : ''}</button></div>`, 'accept-' + o.id);
+    <div class="ov-f"><button type="button" class="ghost" onclick="closeModal()">Not now</button><span class="grow"></span><button type="button" id="accGo" onclick="doAccept()">Accept${A.payNow ? (prepay() ? ' & take ' : ' & record ') + moneyShort(T.total) : ''}</button></div>`, 'accept-' + o.id);
 }
 window.accReasonToggle = () => { const box = $('#accReasonBox'); if (box) box.classList.toggle('hidden', round2m(Number(state.acc.price)) === accTotals().computed); };
 window.accSet = (k, v) => {
@@ -1124,7 +1132,7 @@ window.accSet = (k, v) => {
   if (k === 'priceEdit') { A.priceEdit = true; A.price = String(accTotals().computed); }
   if (k === 'pickup') A.pickup = v;
   if (k === 'disc') A.disc = A.disc === v ? '' : v;
-  if (k === 'payNow') A.payNow = !A.payNow;
+  if (k === 'payNow' && !prepay()) A.payNow = !A.payNow;
   if (k === 'method') A.method = v;
   drawAccept();
   if (k === 'priceEdit') { const i = $('#accPrice'); if (i) { i.focus(); i.select(); } }
@@ -1642,6 +1650,7 @@ async function renderSettings(view) {
       <p class="hint">Guest name, number of items and payment choice are always required. Toggle the optional ones below (saved with "Save settings").</p>
       <label style="display:flex;gap:9px;align-items:center;font-weight:400"><input type="checkbox" id="stReqEmail" style="width:auto" ${s.requireEmail ? 'checked' : ''}> Guest must give an email when ordering</label>
       <label style="display:flex;gap:9px;align-items:center;font-weight:400;margin-top:8px"><input type="checkbox" id="stReqRoom" style="width:auto" ${s.requireRoomOnAccept ? 'checked' : ''}> Room must be selected when accepting an order</label>
+      <label style="display:flex;gap:9px;align-items:flex-start;font-weight:400;margin-top:8px"><input type="checkbox" id="stPrepay" style="width:auto;margin-top:4px" ${s.requirePrepay ? 'checked' : ''}> <span>Payment up front: guests pay in full when they drop off, reception takes the payment when accepting, and nothing goes into the wash unpaid. Guests no longer see “Pay at pickup”.</span></label>
     </div>
     <div class="card">
       <h3 style="margin-top:0">Pricing & loads</h3>
@@ -1989,7 +1998,7 @@ window.saveSettings = async () => {
   const body = {
     hostelName: $('#stName').value.trim(), ...colorDraft(),
     currency: { code, symbol }, rooms: $('#stRooms').value, pricePerLoad: $('#stPrice').value, piecesPerLoad: $('#stPieces').value,
-    requireEmail: $('#stReqEmail').checked, requireRoomOnAccept: $('#stReqRoom').checked,
+    requireEmail: $('#stReqEmail').checked, requireRoomOnAccept: $('#stReqRoom').checked, requirePrepay: $('#stPrepay').checked,
     turnaroundHours: $('#stTurn').value,
     followUpHours: $('#stFollowUp').value, followUpEveryHours: $('#stFollowEvery').value,
     pickupLeadHours: $('#stPickupLead').value,

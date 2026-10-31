@@ -73,7 +73,7 @@ export async function handleRequest({ method, path, query = {}, body = {}, heade
         hostelName: s.hostelName, logoDataUrl: s.logoDataUrl, accentColor: s.accentColor, hoverColor: s.hoverColor,
         accent2Color: s.accent2Color, stageColors: s.stageColors,
         currency: s.currency, piecesPerLoad: s.piecesPerLoad, pricePerLoad: s.pricePerLoad,
-        turnaroundHours: s.turnaroundHours, requireEmail: s.requireEmail,
+        turnaroundHours: s.turnaroundHours, requireEmail: s.requireEmail, requirePrepay: s.requirePrepay,
       });
     }
 

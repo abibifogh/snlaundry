@@ -750,6 +750,46 @@ try {
     ok('the correction is in the log', (r.body.logs || []).some((l) => /counted 30 items \(guest said 20\)/.test(l.detail)));
   }
 
+  section('Payment up front (admin switch)');
+  {
+    const place = (name, timing = 'pickup') => api('POST', '/api/orders', { body: { guestName: name, guestEmail: 'p@example.com', items: 10, paymentTiming: timing } });
+    // An order accepted unpaid while the switch is off…
+    const before = await place('Before Switch');
+    await api('POST', `/api/orders/${before.body.id}/accept`, { headers: H(adminT), body: { room: 'P1' } });
+    r = await api('PUT', '/api/settings', { headers: H(adminT), body: { requirePrepay: true } });
+    ok('admin turns payment up front on', r.status === 200 && r.body.requirePrepay === true);
+    r = await api('GET', '/api/public-settings');
+    ok('the guest order page is told', r.body.requirePrepay === true);
+    const g = await place('Prepay Guest', 'pickup');
+    const timingOf = async (id) => (await api('GET', `/api/orders/${id}`, { headers: H(adminT) })).body.paymentTiming;
+    ok('a guest can no longer choose pay at pickup', (await timingOf(g.body.id)) === 'now');
+    r = await api('POST', `/api/orders/${g.body.id}/accept`, { headers: H(adminT), body: { room: 'P1' } });
+    ok('accepting without taking payment is refused', r.status === 400 && /up front/.test(r.body.error), JSON.stringify(r.body));
+    r = await api('GET', `/api/orders/${g.body.id}`, { headers: H(adminT) });
+    ok('…and the order stays new', r.body.status === 'new');
+    r = await api('POST', `/api/orders/${g.body.id}/accept`, { headers: H(adminT), body: { room: 'P1', amountPaid: 5, paymentMethod: 'cash' } });
+    ok('a part payment is refused too', r.status === 400 && /full/.test(r.body.error), JSON.stringify(r.body));
+    await api('POST', '/api/discounts', { headers: H(adminT), body: { code: 'PREPAY10', type: 'percent', value: 10 } });
+    const usesOf = async () => (await api('GET', '/api/discounts', { headers: H(adminT) })).body.find((d) => d.code === 'PREPAY10').uses;
+    const usesBefore = await usesOf();
+    r = await api('POST', `/api/orders/${g.body.id}/accept`, { headers: H(adminT), body: { room: 'P1', discountCode: 'PREPAY10', amountPaid: 8, paymentMethod: 'cash' } });
+    ok('a refused accept does not use up the discount code', r.status === 400 && (await usesOf()) === usesBefore, JSON.stringify({ s: r.status, u: await usesOf(), usesBefore }));
+    r = await api('POST', `/api/orders/${g.body.id}/accept`, { headers: H(adminT), body: { room: 'P1', paymentStatus: 'paid', paymentMethod: 'card' } });
+    ok('accepting with the full payment works', r.status === 200 && r.body.status === 'accepted' && r.body.paymentStatus === 'paid', JSON.stringify({ s: r.status, p: r.body.paymentStatus }));
+    r = await api('POST', `/api/orders/${g.body.id}/advance`, { headers: H(adminT), body: {} });
+    ok('a paid order goes into the wash', r.status === 200 && r.body.status === 'cleaning');
+    r = await api('POST', `/api/orders/${before.body.id}/advance`, { headers: H(adminT), body: {} });
+    ok('an older unpaid order cannot go into the wash', r.status === 409 && /up front/.test(r.body.error), JSON.stringify(r.body));
+    await api('POST', `/api/orders/${before.body.id}/pay`, { headers: H(adminT), body: { method: 'cash' } });
+    r = await api('POST', `/api/orders/${before.body.id}/advance`, { headers: H(adminT), body: {} });
+    ok('once paid, it can', r.status === 200 && r.body.status === 'cleaning', JSON.stringify({ s: r.status, e: r.body.error }));
+    r = await api('PUT', '/api/settings', { headers: H(adminT), body: { requirePrepay: false } });
+    const after = await place('After Switch', 'pickup');
+    ok('switched off: pay at pickup is back', r.body.requirePrepay === false && (await timingOf(after.body.id)) === 'pickup');
+    r = await api('POST', `/api/orders/${after.body.id}/accept`, { headers: H(adminT), body: { room: 'P1' } });
+    ok('switched off: accepting unpaid works again', r.status === 200 && r.body.paymentStatus === 'unpaid');
+  }
+
   section('Undo: the person who moved an order can take it back briefly');
   {
     const mk = async (name) => {
